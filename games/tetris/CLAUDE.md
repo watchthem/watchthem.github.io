@@ -216,17 +216,21 @@ plays, just doesn't block gameplay).
 `macroquad::rand`'s global one — that's seeded for deterministic replay; drawing from
 it here would shift every real piece). Three beats, looping: board is **pre-filled**
 (random, every row missing >=1 cell so nothing reads as a real line) and visible right
-away; a **flood** sweeps bottom-to-top turning each row solid-color; a **drain** sweeps
+away; a **flood** sweeps bottom-to-top turning rows solid-color; a **drain** sweeps
 top-to-bottom emptying rows; repeats with a fresh pattern. `ROWS_PER_SEC = 3.0` keeps
-one full cycle (~13.3s) *longer* than the intro (~8.3s) on purpose — a visitor sees one
+one full cycle (~13.3s) *longer* than the intro (~11.5s) on purpose — a visitor sees one
 continuous flood into a partial drain, never the reset back to a fresh pattern.
 
-`DemoRow::Solid` draws each flooded row as one flat `draw_rectangle` spanning the full
-row width, no vertical inset (so consecutive flooded rows butt directly together with no
-seam) — tried `draw_cell` per column first (matching the board's per-cell grid look) but
-a full 10-wide row of one repeated color read as a row of separated squares rather than
-the single connected mass a flood should look like; `draw_cell`'s inset is only barely
-visible across a real, compact 1-4 cell piece.
+`DemoRow::Solid` draws each flooded row the same way `Pattern` rows do — `draw_cell` per
+column, not a flat `draw_rectangle` — for visual consistency with the rest of the board
+(real pieces, `Pattern` rows all use the same per-cell grid look). What makes the flood
+read as one connected mass isn't the geometry, it's `flood_color`: a *single* color for
+the whole flooded region (picked once per cycle, in `random_cycle`), not a different
+color per row — tried a flat rectangle-per-row first (no per-cell insets, no seams
+between rows) specifically to avoid a "row of separated squares" look, but that reads as
+inconsistent with the board's own block aesthetic; a uniform color across all the
+per-cell squares turned out to fix the "separated squares" problem on its own, without
+needing to depart from `draw_cell`.
 
 ## Gotchas
 

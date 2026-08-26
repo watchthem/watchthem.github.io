@@ -321,9 +321,10 @@ impl View {
 struct DemoBoard {
     /// This cycle's scattered piece-color content, guaranteed no complete rows.
     pattern: Board,
-    /// This cycle's flood color, one per row (picked once per cycle, not per frame, so
-    /// a given row stays one solid color for the whole flood/drain sweep).
-    row_colors: [Color; H],
+    /// This cycle's flood color — one color for the *whole* flooded region, not one per
+    /// row, so the flood reads as a single connected mass instead of a stack of
+    /// differently-colored bands (picked once per cycle, not per frame).
+    flood_color: Color,
     rng: audio::Rng,
     draining: bool,
     /// While flooding: rows `[line, H)` are solid (already swept), `[0, line)` still
@@ -358,10 +359,10 @@ impl DemoBoard {
 
     fn new(seed: u64) -> Self {
         let mut rng = audio::Rng::new(seed);
-        let (pattern, row_colors) = Self::random_cycle(&mut rng);
+        let (pattern, flood_color) = Self::random_cycle(&mut rng);
         Self {
             pattern,
-            row_colors,
+            flood_color,
             rng,
             draining: false,
             line: H as f32,
@@ -371,8 +372,8 @@ impl DemoBoard {
     /// A full board with every row guaranteed at least one empty cell (picked before
     /// the random fill, so it always stays empty) — the "no complete lines" constraint
     /// this animation depends on to never accidentally look like a real clear — plus
-    /// this cycle's per-row flood colors.
-    fn random_cycle(rng: &mut audio::Rng) -> (Board, [Color; H]) {
+    /// this cycle's single flood color.
+    fn random_cycle(rng: &mut audio::Rng) -> (Board, Color) {
         let mut board: Board = [[None; W]; H];
         for row in board.iter_mut() {
             let guaranteed_empty = rng.index(W);
@@ -382,20 +383,17 @@ impl DemoBoard {
                 }
             }
         }
-        let mut row_colors = [WHITE; H];
-        for color in row_colors.iter_mut() {
-            *color = piece_color(Piece::ALL[rng.index(Piece::ALL.len())]);
-        }
-        (board, row_colors)
+        let flood_color = piece_color(Piece::ALL[rng.index(Piece::ALL.len())]);
+        (board, flood_color)
     }
 
     fn update(&mut self, dt: f32) {
         if self.draining {
             self.line += dt * Self::ROWS_PER_SEC;
             if self.line >= H as f32 {
-                let (pattern, row_colors) = Self::random_cycle(&mut self.rng);
+                let (pattern, flood_color) = Self::random_cycle(&mut self.rng);
                 self.pattern = pattern;
-                self.row_colors = row_colors;
+                self.flood_color = flood_color;
                 self.line = H as f32;
                 self.draining = false;
             }
@@ -899,19 +897,19 @@ fn draw_demo_board(demo: &DemoBoard) {
                 }
             }
             DemoRow::Solid => {
-                // A flat fill, not `draw_cell` per column: `draw_cell`'s inset is
-                // barely visible across a compact 1-4 cell piece, but tiling it 10-wide
-                // for one uniform color reads as a row of separated squares rather than
-                // the single connected mass a flood should look like. No vertical inset
-                // either, so consecutive flooded rows butt directly together with no
-                // seam between them.
-                draw_rectangle(
-                    BOARD_X + 1.0,
-                    BOARD_Y + r as f32 * CELL,
-                    BOARD_W - 2.0,
-                    CELL,
-                    demo.row_colors[r],
-                );
+                // Same `draw_cell` per-column rendering `Pattern` rows use — visually
+                // consistent with the rest of the board (real pieces, `Pattern` rows)
+                // rather than introducing a different flat-bar look just for this state.
+                // One color for the whole flood (`flood_color`, not a per-row color)
+                // is what keeps this reading as a single connected mass instead of a
+                // stack of differently-colored bands.
+                for c in 0..W {
+                    draw_cell(
+                        BOARD_X + c as f32 * CELL,
+                        BOARD_Y + r as f32 * CELL,
+                        demo.flood_color,
+                    );
+                }
             }
             DemoRow::Empty => {}
         }
