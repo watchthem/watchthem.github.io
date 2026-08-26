@@ -559,6 +559,17 @@ pub fn conf() -> Conf {
 
 /// Entry point for the standalone per-game binary — same window/`--no-ui` branching
 /// `main()` used to do.
+///
+/// `Control::new()` unconditionally calls `prevent_quit()` (needed so the native
+/// standalone *shell*'s `play_until_exit()` can read a window-close as
+/// `ExitReason::Quit` instead of the process dying immediately) — which means a plain
+/// `.await;` here that drops `amain`'s returned `ExitReason` leaves the process running
+/// with a completed future and an unresponsive window after Esc or the close button:
+/// there's no menu for a bare standalone binary to return to, and nothing was left to
+/// actually terminate the process either. `std::process::exit(0)` after the await is
+/// what the shell's own `run_game`/`play_until_exit()` caller does with the same
+/// `ExitReason` (there, by returning to the menu loop instead of exiting — a standalone
+/// binary has no menu, so exiting is the only sensible response to either reason here).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn start() {
     let cli = parse_cli_args();
@@ -568,6 +579,7 @@ pub fn start() {
     }
     macroquad::Window::from_config(conf(), async move {
         amain(cli).await;
+        std::process::exit(0);
     });
 }
 

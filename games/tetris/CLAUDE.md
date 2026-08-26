@@ -176,6 +176,10 @@ continuous flood into a partial drain, never the reset back to a fresh pattern.
   convention, not modern guideline Tetris's 3-6-deep queue. `game::LOOKAHEAD` (3) is
   unrelated and unchanged: it's retained depth for the solver's `BEAM_DEPTH = 2`
   lookahead, not display count — don't conflate the two if either changes again.
+- Native `start()` calls `std::process::exit(0)` after `amain(cli).await` — without it,
+  Esc/close-window left the process hanging (a completed future, unresponsive window)
+  once `Control::new()` started unconditionally calling `prevent_quit()` for the shell.
+  Same bug likely exists in every other game's `start()` — not yet fixed there.
 
 ## Running
 
