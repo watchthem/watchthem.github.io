@@ -16,6 +16,10 @@
 //! lands with the first game that actually needs a background track, rather than as an
 //! empty module today.
 
+pub mod chiptune;
+pub mod filter;
+pub mod mix;
+pub mod pitch;
 pub mod playback;
 pub mod rng;
 pub mod sfx;
