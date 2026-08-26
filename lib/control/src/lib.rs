@@ -20,6 +20,26 @@ const SWIPE_MIN_DIST: f32 = 60.0;
 /// Swipes slower than this (start to release) are treated as a drag/tap, not a swipe.
 const SWIPE_MAX_SECS: f64 = 0.6;
 
+/// Set once by `bundle/src/shell.rs` before any game's `play_until_exit()` runs — this
+/// is the *only* place Esc genuinely returns to a menu, so it's the only place that
+/// should say/do "Menu". A per-game standalone binary's `start()` never calls
+/// `mark_in_shell`, so its `Control` correctly reports no shell: Esc there just quits
+/// the process (see `start()`'s own doc comment in any game's `lib.rs`), and saying
+/// "Esc Menu" in that hint would be actively misleading. A single process-wide flag
+/// rather than threading a parameter through every game's `amain`/`start`/
+/// `play_until_exit` (all ~11 of them, identical signatures) works because which
+/// binary a process *is* never changes mid-run — `hcg --game <name>` still goes
+/// through the shell's `play_until_exit`, same as landing on the menu first would.
+#[cfg(not(target_arch = "wasm32"))]
+static IN_SHELL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Call once, before running any game, from the native standalone shell only (see
+/// `IN_SHELL`). Not `pub(crate)` — `bundle/src/shell.rs` is the one external caller.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn mark_in_shell() {
+    IN_SHELL.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 #[cfg(target_arch = "wasm32")]
 unsafe extern "C" {
     fn hcg_ga_event(name_ptr: *const u8, name_len: u32, params_ptr: *const u8, params_len: u32);
@@ -131,6 +151,10 @@ pub struct Control {
     /// `exit_requested()` reading raw input itself.
     #[cfg(not(target_arch = "wasm32"))]
     pending_exit: Option<ExitReason>,
+    /// Snapshotted from `IN_SHELL` at construction — whether Esc has an actual menu to
+    /// return to. See `IN_SHELL`'s own doc comment.
+    #[cfg(not(target_arch = "wasm32"))]
+    in_shell: bool,
     /// (avg x of the two touches, `mult` at gesture start) while a two-finger drag is live.
     two_finger_anchor: Option<(f32, f32)>,
     /// (x, y, start time) of an in-progress single-finger touch.
@@ -188,6 +212,8 @@ impl Control {
             popup_open: false,
             #[cfg(not(target_arch = "wasm32"))]
             pending_exit: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            in_shell: IN_SHELL.load(std::sync::atomic::Ordering::Relaxed),
             two_finger_anchor: None,
             one_finger_start: None,
             variant_swipe: false,
@@ -389,7 +415,16 @@ impl Control {
                 if self.popup_open {
                     self.popup_open = false;
                 } else {
-                    self.pending_exit = Some(ExitReason::Menu);
+                    // `Menu` only where there's an actual menu to land on — see
+                    // `IN_SHELL`. A per-game standalone binary has none, so Esc there
+                    // is `Quit`, matching what it's actually going to do
+                    // (`start()`'s `process::exit(0)` treats either reason the same,
+                    // but the reason itself should still describe reality).
+                    self.pending_exit = Some(if self.in_shell {
+                        ExitReason::Menu
+                    } else {
+                        ExitReason::Quit
+                    });
                 }
             }
         }
@@ -453,15 +488,19 @@ impl Control {
     }
 
     /// Native-only: `Some(Menu)` when the player pressed Esc (and the hotkey popup wasn't
-    /// open — Esc closes that first) or clicked `draw_overlay`'s "back to menu" corner
-    /// hint, `Some(Quit)` when they closed the window (only fires because `Control::new`
-    /// calls `prevent_quit()` — without that, a close click kills the process before this
-    /// is ever read), else `None`. Always `None` on WASM — a browser tab has nothing to
-    /// "return to", and Esc there is page-level JS for the hotkey popup
-    /// (`xtask::hotkey_popup`), not a Rust binding. A game's `play_until_exit()` checks
-    /// this once per frame, right after `handle_keys()` (which is what actually computes
-    /// the value returned here — see its doc comment); `play()` (the browser entry point)
-    /// never calls it.
+    /// open — Esc closes that first) or clicked `draw_overlay`'s corner hint, *and* this
+    /// `Control` was constructed under the shell (`IN_SHELL`/`mark_in_shell`) — that's
+    /// the only context with an actual menu to return to. The exact same Esc/click
+    /// outside the shell (a per-game standalone binary) instead reports `Some(Quit)`,
+    /// matching what's actually about to happen (`start()`'s `process::exit(0)`, no
+    /// menu to land on). `Some(Quit)` also fires when the window is closed (only
+    /// because `Control::new` calls `prevent_quit()` — without that, a close click
+    /// kills the process before this is ever read), else `None`. Always `None` on
+    /// WASM — a browser tab has nothing to "return to", and Esc there is page-level JS
+    /// for the hotkey popup (`xtask::hotkey_popup`), not a Rust binding. A game's
+    /// `play_until_exit()` checks this once per frame, right after `handle_keys()`
+    /// (which is what actually computes the value returned here — see its doc
+    /// comment); `play()` (the browser entry point) never calls it.
     pub fn exit_requested(&self) -> Option<ExitReason> {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -478,9 +517,10 @@ impl Control {
     /// seed editor at the bottom (`draw_seed_editor`) is the exception: it draws on both
     /// platforms, since `R` itself is a cross-platform hotkey (see `handle_keys`).
     /// Natively, draws two things, always in this order so the popup paints over the hint: a small always-visible
-    /// "back to menu" hint in the bottom-right corner (chosen to avoid the top-left corner
-    /// every game's own score/generation HUD text uses), clickable as a mouse-first
-    /// equivalent of pressing Esc; and, when `?` has toggled `popup_open` on, a full
+    /// "Esc" hint in the bottom-right corner (chosen to avoid the top-left corner every
+    /// game's own score/generation HUD text uses — says "Menu" or "Quit" depending on
+    /// `in_shell`, see `IN_SHELL`), clickable as a mouse-first equivalent of pressing
+    /// Esc; and, when `?` has toggled `popup_open` on, a full
     /// hotkey-reference panel mirroring the web build's own `?`-key popup. Call once per
     /// frame, after a game's own drawing is done (typically right before
     /// `next_frame().await`) — safe to call there specifically because nothing here draws
@@ -490,7 +530,11 @@ impl Control {
     pub fn draw_overlay(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let hint = "Esc  Menu    ?  Help";
+            let hint = if self.in_shell {
+                "Esc  Menu    ?  Help"
+            } else {
+                "Esc  Quit    ?  Help"
+            };
             let fs = 16.0;
             let pad = 8.0;
             let td = measure_text(hint, None, fs as u16, 1.0);
@@ -510,7 +554,11 @@ impl Control {
                 && is_mouse_button_pressed(MouseButton::Left)
                 && Rect::new(x, y, w, h).contains(vec2(mouse_position().0, mouse_position().1))
             {
-                self.pending_exit = Some(ExitReason::Menu);
+                self.pending_exit = Some(if self.in_shell {
+                    ExitReason::Menu
+                } else {
+                    ExitReason::Quit
+                });
             }
 
             if self.popup_open {
@@ -556,7 +604,15 @@ impl Control {
     /// called on its own (it doesn't check `popup_open`).
     #[cfg(not(target_arch = "wasm32"))]
     fn draw_popup(&self) {
-        const LINES: [(&str, &str); 11] = [
+        // Not `const` (unlike every other line, which never varies): the `Esc` entry's
+        // description depends on `in_shell` — "back to menu" is only true under the
+        // shell, see `IN_SHELL`.
+        let esc_desc = if self.in_shell {
+            "back to menu (or close this help)"
+        } else {
+            "quit (or close this help)"
+        };
+        let lines: [(&str, &str); 11] = [
             ("=", "speed up"),
             ("-", "slow down"),
             ("0", "reset speed"),
@@ -567,7 +623,7 @@ impl Control {
             ("R", "show / type a seed to replay"),
             ("S", "save screenshot"),
             ("?", "toggle this help"),
-            ("Esc", "back to menu (or close this help)"),
+            ("Esc", esc_desc),
         ];
 
         let sw = screen_width();
@@ -578,12 +634,12 @@ impl Control {
         let desc_x = 120.0;
         // Sized off the actual longest desc rather than a fixed guess — "toggle
         // fullscreen (or double-click)" was overflowing a hardcoded 440px panel.
-        let max_desc_w = LINES
+        let max_desc_w = lines
             .iter()
             .map(|(_, desc)| measure_text(desc, None, 20, 1.0).width)
             .fold(0.0f32, f32::max);
         let panel_w = desc_x + max_desc_w + 20.0;
-        let panel_h = 70.0 + LINES.len() as f32 * line_h;
+        let panel_h = 70.0 + lines.len() as f32 * line_h;
         let px = (sw - panel_w) * 0.5;
         let py = (sh - panel_h) * 0.5;
         draw_rectangle(px, py, panel_w, panel_h, Color::new(0.1, 0.1, 0.15, 0.97));
@@ -596,7 +652,7 @@ impl Control {
             Color::new(0.4, 0.75, 1.0, 1.0),
         );
         draw_text("Hotkeys", px + 20.0, py + 38.0, 26.0, WHITE);
-        for (i, (key, desc)) in LINES.iter().enumerate() {
+        for (i, (key, desc)) in lines.iter().enumerate() {
             let ly = py + 70.0 + i as f32 * line_h;
             draw_text(key, px + 20.0, ly, 20.0, Color::new(0.5, 0.8, 1.0, 1.0));
             draw_text(

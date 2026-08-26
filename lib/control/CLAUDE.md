@@ -16,7 +16,7 @@ not gameplay input (no game in this workspace takes player moves; see root CLAUD
 | `R` | seed editor (view/type/replay a seed) | both |
 | `S` | save screenshot | page-level JS (`xtask::screenshot_bridge`) |
 | `?` | hotkey popup | page-level JS (`xtask::hotkey_popup`) |
-| `Esc` | close popup / back to menu (native shell) | native |
+| `Esc` | close popup / back to menu (bundle shell) or quit (standalone binary) | native |
 
 Every game draws `control.label()` (`"x1.000"`/`"PAUSED"`, `"  MUTED"` suffix when muted)
 in its own HUD — see any game's `lib.rs`.
@@ -27,6 +27,22 @@ WASM-only DOM concern), then update **both** `draw_popup`'s `LINES` (native popu
 folding a new mode into an existing cycling hotkey (`V`) over adding a dedicated key — see
 match-3/klondike/spider's variant cycles; only add a new key if the existing control
 genuinely can't express the distinction.
+
+## Esc (`Menu` vs `Quit`)
+
+Only the native standalone shell (`bundle/src/shell.rs`) has an actual menu for Esc to
+return to — a per-game standalone binary (`start()`) has none, Esc there just quits the
+process. `Control` can't tell these apart from inside a game (both paths call the same
+shared `amain()`), so the shell calls `control::mark_in_shell()` once, before running
+any game — a process-wide flag (`IN_SHELL`), not a parameter threaded through every
+game's `amain`/`start`/`play_until_exit`, since which binary a process *is* never
+changes mid-run (`hcg --game <name>` still goes through the shell's `play_until_exit`,
+same as landing on the menu first would). `Control::new()` snapshots the flag once at
+construction. Drives three things together — don't fix one without the others:
+`exit_requested()`'s actual `ExitReason` (Menu only in-shell, Quit otherwise — a
+standalone binary treats either the same via `process::exit(0)`, but the reported
+reason should still match reality), `draw_overlay()`'s corner-hint text, and
+`draw_popup()`'s `Esc` line in the full hotkey panel.
 
 ## Mute (`M`)
 

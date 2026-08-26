@@ -37,6 +37,12 @@ const FULLSCREEN_TOGGLE_COOLDOWN_SECS: f64 = 0.3;
 /// given, boots straight into that game — this is what `mise run run-bundle <name>` and
 /// `hcg --game <name>` drive) and otherwise starts on the menu.
 pub fn run() {
+    // Marks the whole process, not just this call — every game's `Control` (constructed
+    // inside its own `amain`, whether reached via `--game` or the interactive menu)
+    // reads this once at construction to decide whether Esc has an actual menu to
+    // return to. A per-game standalone binary never calls this, so it correctly gets
+    // `in_shell: false` — see `control::mark_in_shell`'s own doc comment.
+    control::mark_in_shell();
     let boot = parse_boot_game();
     macroquad::Window::from_config(shell_conf(), shell_main(boot));
 }
