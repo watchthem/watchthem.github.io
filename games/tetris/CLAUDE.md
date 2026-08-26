@@ -99,13 +99,18 @@ firing a "rotate" cue for a rotation that never happened.
 `intro` = "Korobeiniki" (Коробе́йники, ~1861 Russian folk tune, public domain — the real
 Tetris theme), transcribed fresh in `korobeiniki()`, 8 measures each exactly
 `MEASURE_SECS`. The melody is **A natural minor** (F♮/G♮ in m5, never F#/G#, closes on a
-held A4) — `CHORD_GUIDE_TONES` harmonizes it Am11-Am7-Em7-Am7-Dm7-C6-E7-Am7 (i-i-v-i-iv-
-♭III-V-i), one chord per measure as just the 3rd+7th (guide tones — the two notes that
-define a chord's color; a full triad reads as muddy under one melody line). Comp
-envelope fractions must sum to `1.0 * MEASURE_SECS` exactly or it drifts out of sync
-with the melody — regression-tested (`comp_track_len_matches_melody_len_per_measure`).
-Square-wave lead gets a light low-pass + reduced sustain so it doesn't read as
-harsh/clippy.
+held A4) — `CHORD_GUIDE_TONES` harmonizes it Am11-Am7-Em7-Am7-Dm7-C6-E7-**A6** (i-i-v-i-
+iv-♭III-V-**I**), one chord per measure as just the 3rd+7th (guide tones — the two notes
+that define a chord's color; a full triad reads as muddy under one melody line). The
+final chord (m8) is a Picardy third — the tonic raised to major (`6` voicing, matching
+`C6`'s own precedent, not `maj7`) instead of closing on the tonic minor. This does mean
+the measure's opening C5 (the tune's own minor 3rd) briefly sits a half-step against the
+comp's now-major C# before the melody moves on to its held A4 root — expected for a
+Picardy third landing under a melody that hasn't also switched to major, not a bug; see
+`CHORD_GUIDE_TONES`'s own doc comment before treating it as a clash to fix. Comp envelope
+fractions must sum to `1.0 * MEASURE_SECS` exactly or it drifts out of sync with the
+melody — regression-tested (`comp_track_len_matches_melody_len_per_measure`). Square-wave
+lead gets a light low-pass + reduced sustain so it doesn't read as harsh/clippy.
 
 `korobeiniki_track`'s final `normalize_peak` target is `0.65`, not the more obvious
 `0.85`-ish — real headroom, not style. Every note's ADSR ramps to full `1.0` gain at

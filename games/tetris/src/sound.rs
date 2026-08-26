@@ -159,11 +159,25 @@ fn korobeiniki() -> Vec<(Option<f32>, f32)> {
 }
 
 /// One (3rd, 7th) guide-tone pair per measure of `korobeiniki`, in semitones from A4, a
-/// jazz reharmonization of the tune: **i - i - v - i - iv - ♭III - V - i** (Am11 - Am7 -
-/// Em7 - Am7 - Dm7 - C6 - E7 - Am7), one octave below the melody. Guide tones only (not
-/// full triads) — the 3rd and 7th are the two notes that actually define a chord's
+/// jazz reharmonization of the tune: **i - i - v - i - iv - ♭III - V - I** (Am11 - Am7 -
+/// Em7 - Am7 - Dm7 - C6 - E7 - **A6**), one octave below the melody. Guide tones only
+/// (not full triads) — the 3rd and 7th are the two notes that actually define a chord's
 /// quality/color, the standard jazz-comping shorthand; a full stacked chord here would
 /// just read as muddy under a single-line melody.
+///
+/// **m8 ends on `A6`, a Picardy third** — the final chord raised to major (`3rd`: C ->
+/// C#) rather than closing on the tonic minor, a classic device for a brighter, more
+/// resolved ending. A `6` voicing (matching `C6`'s own precedent at m5, `F#` instead of
+/// a major 7th) rather than `Amaj7`, specifically to sidestep the question of whether a
+/// major 7th (G#) sitting a half-step under the melody's own held root note reads as
+/// "sophisticated" or "unresolved" — `6` has no such tension at all. One real, accepted
+/// clash remains: the measure's melody opens on C5 (the *minor* 3rd, scale degree 3 of
+/// the tune) against the comp's now-major C#, a half-step apart, for roughly the first
+/// quarter of the bar before the melody itself moves on to the held A4 root. This is
+/// inherent to a Picardy third landing on a bar whose own melody hasn't also switched to
+/// major — the brief tension is the sound of the melody "catching up" to a harmony that
+/// got there first, not a bug to fix, but real and worth knowing about if it's ever
+/// flagged again as a clash by the checklist below.
 ///
 /// **The melody is A natural minor, full stop** — it uses F♮/G♮ (m5) and never F#/G#,
 /// and closes the whole phrase on a held A4 preceded by C5, an A-minor tonic outline.
@@ -204,7 +218,7 @@ const CHORD_GUIDE_TONES: [(f32, f32); 8] = [
     (-4.0, -9.0),  // m5 Dm7: 3rd=F, 7th=C
     (-5.0, -12.0), // m6 C6:  3rd=E, 6th=A
     (-1.0, -7.0),  // m7 E7:  3rd=G#, 7th=D
-    (-9.0, -2.0),  // m8 Am7: 3rd=C, 7th=G
+    (-8.0, -3.0),  // m8 A6 (Picardy third): 3rd=C#, 6th=F#
 ];
 
 /// One measure's worth of soft comping: the 3rd and 7th (or 3rd and 6th, for `C6`)
@@ -263,13 +277,14 @@ fn comp_track() -> Vec<f32> {
 }
 
 /// Root note per measure, one octave below `CHORD_GUIDE_TONES`'s own octave so the bass
-/// sits under the comp rather than doubling it: Am-Am-Em-Am-Dm-C-E-Am (matching
-/// `CHORD_GUIDE_TONES`'s A-minor progression — see its doc comment). Not simply "3rd
-/// minus a 3rd" from the guide tones any more: m1's guide tones are voiced as the 11th
-/// and ♭7 over an A root (an `Am11` reading), not a 3rd/7th pair a root could be
-/// mechanically derived from, and m7's root (E) is the *5th* below its guide tones'
-/// implied E-something, not a 3rd below — both come from the key-center analysis, not
-/// arithmetic on the pair stored above.
+/// sits under the comp rather than doubling it: Am-Am-Em-Am-Dm-C-E-A6 (matching
+/// `CHORD_GUIDE_TONES`'s A-minor progression, Picardy-third ending included — see its
+/// doc comment). Not simply "3rd minus a 3rd" from the guide tones any more: m1's guide
+/// tones are voiced as the 11th and ♭7 over an A root (an `Am11` reading), not a 3rd/7th
+/// pair a root could be mechanically derived from, and m7's root (E) is the *5th* below
+/// its guide tones' implied E-something, not a 3rd below — both come from the
+/// key-center analysis, not arithmetic on the pair stored above. m8's root (A) is
+/// unaffected by its own major/minor swap — only the chord's 3rd changes, not its root.
 const BASS_ROOTS: [f32; 8] = [
     -24.0, // m1 A
     -24.0, // m2 A
@@ -286,9 +301,10 @@ const BASS_ROOTS: [f32; 8] = [
 /// root rather than jumping registers: a ♭7 (root + 10) for every `m7`/dominant-7
 /// chord here (`E7`'s ♭7 is the same interval size as a minor 7th's, only the 3rd
 /// differs between the two qualities, and this table never touches the 3rd), but a
-/// major 6th (root + 9) for the one `C6` measure (m6) — `C6` has no 7th, and root + 10
-/// there would land on a b7 clashing with the chord's actual 6th (A).
-const BASS_COLOR_TONE: [f32; 8] = [10.0, 10.0, 10.0, 10.0, 10.0, 9.0, 10.0, 10.0];
+/// major 6th (root + 9) for the two `6`-voiced measures (`C6` at m6, `A6` at m8) — a `6`
+/// chord has no 7th, and root + 10 there would land on a b7 clashing with the chord's
+/// actual 6th.
+const BASS_COLOR_TONE: [f32; 8] = [10.0, 10.0, 10.0, 10.0, 10.0, 9.0, 10.0, 9.0];
 
 /// One punchy bass note. `secs` fully determines the envelope's total length (attack +
 /// decay + release always sums to it, `sustain` left at `0.0`), so a note never bleeds
