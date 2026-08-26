@@ -1080,7 +1080,5 @@ fn draw_game_over(over_t: f32, daily_mode: bool) {
 /// + `draw_flash`, drawn directly by `amain`'s wait loop), not drawn here.
 fn draw_opening_title() {
     let text = rgb(210, 210, 225);
-    let dim = rgb(140, 140, 160);
     draw_text("TETRIS", BOARD_X, 46.0, 34.0, text);
-    draw_text("a Russian folk tune, jazz-comped", BOARD_X, 72.0, 18.0, dim);
 }
