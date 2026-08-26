@@ -232,6 +232,17 @@ inconsistent with the board's own block aesthetic; a uniform color across all th
 per-cell squares turned out to fix the "separated squares" problem on its own, without
 needing to depart from `draw_cell`.
 
+`draw_opening_panel` is the opening screen's counterpart to `draw_hud`'s side panel
+(shared `draw_panel_frame` for the bordered container, same `NEXT_BOX_H`) — without it
+the whole panel column reads as missing/empty during loading (same "extra empty space"
+`draw_panel_frame`'s own doc comment describes) and pops into existence the instant the
+intro ends. Shows `DemoBoard::next_preview` (a cosmetic piece, regenerated alongside
+`pattern`/`flood_color` each cycle — never touches the real solver's queue) and
+zeroed-out stat lines — `GEN 0`, not `GEN 1`: the real HUD's own display is
+`generation + 1`, so a fresh game's actual first frame reads `GEN 1`, but the opening
+screen is *before* that first generation exists at all, and `0` reads as "nothing
+started yet" rather than implying a generation already happened.
+
 ## Gotchas
 
 - `gen` is a reserved keyword since the 2024 edition (future generator-block syntax) —

@@ -325,6 +325,10 @@ struct DemoBoard {
     /// row, so the flood reads as a single connected mass instead of a stack of
     /// differently-colored bands (picked once per cycle, not per frame).
     flood_color: Color,
+    /// Cosmetic-only "next piece" shown in the opening screen's side panel — see
+    /// `draw_opening_panel`. Regenerated alongside `pattern`/`flood_color`, same reason:
+    /// purely decorative, never touches the real solver's piece queue.
+    next_preview: Piece,
     rng: audio::Rng,
     draining: bool,
     /// While flooding: rows `[line, H)` are solid (already swept), `[0, line)` still
@@ -359,10 +363,11 @@ impl DemoBoard {
 
     fn new(seed: u64) -> Self {
         let mut rng = audio::Rng::new(seed);
-        let (pattern, flood_color) = Self::random_cycle(&mut rng);
+        let (pattern, flood_color, next_preview) = Self::random_cycle(&mut rng);
         Self {
             pattern,
             flood_color,
+            next_preview,
             rng,
             draining: false,
             line: H as f32,
@@ -372,8 +377,8 @@ impl DemoBoard {
     /// A full board with every row guaranteed at least one empty cell (picked before
     /// the random fill, so it always stays empty) — the "no complete lines" constraint
     /// this animation depends on to never accidentally look like a real clear — plus
-    /// this cycle's single flood color.
-    fn random_cycle(rng: &mut audio::Rng) -> (Board, Color) {
+    /// this cycle's single flood color and its cosmetic "next piece" preview.
+    fn random_cycle(rng: &mut audio::Rng) -> (Board, Color, Piece) {
         let mut board: Board = [[None; W]; H];
         for row in board.iter_mut() {
             let guaranteed_empty = rng.index(W);
@@ -384,16 +389,18 @@ impl DemoBoard {
             }
         }
         let flood_color = piece_color(Piece::ALL[rng.index(Piece::ALL.len())]);
-        (board, flood_color)
+        let next_preview = Piece::ALL[rng.index(Piece::ALL.len())];
+        (board, flood_color, next_preview)
     }
 
     fn update(&mut self, dt: f32) {
         if self.draining {
             self.line += dt * Self::ROWS_PER_SEC;
             if self.line >= H as f32 {
-                let (pattern, flood_color) = Self::random_cycle(&mut self.rng);
+                let (pattern, flood_color, next_preview) = Self::random_cycle(&mut self.rng);
                 self.pattern = pattern;
                 self.flood_color = flood_color;
+                self.next_preview = next_preview;
                 self.line = H as f32;
                 self.draining = false;
             }
@@ -702,6 +709,7 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
         clear_background(rgb(15, 15, 20));
         draw_opening_title();
         draw_demo_board(&demo);
+        draw_opening_panel(&demo);
         control.draw_overlay();
         next_frame().await;
     }
@@ -862,6 +870,37 @@ fn draw_board_frame() {
     }
 }
 
+/// Classic (NES-era) Tetris convention: one next piece, not a modern-guideline
+/// multi-piece queue — see games/tetris/CLAUDE.md. Box is taller than the old
+/// per-slot 68px so the single preview doesn't read as shrunken inside the panel.
+const NEXT_BOX_H: f32 = 96.0;
+
+/// The side panel's bordered background, spanning the board's full height — shared by
+/// `draw_hud` (real gameplay) and `draw_opening_panel` (the opening screen). Without
+/// this, the panel's actual content (next-piece box + a handful of stat lines) only
+/// fills the top third or so of the board's height, leaving a tall stretch of bare
+/// background beneath it that reads as extra empty space on the right — even though the
+/// board and panel are already horizontally centered as a pair. Drawing it during the
+/// opening screen too (not just real gameplay) is what keeps that same empty-space
+/// problem from reappearing there, and avoids the panel visibly "popping in" the moment
+/// gameplay actually starts.
+fn draw_panel_frame() {
+    draw_rectangle(
+        PANEL_OUTER_X - 1.0,
+        BOARD_Y - 1.0,
+        PANEL_OUTER_W + 2.0,
+        BOARD_H + 2.0,
+        rgb(60, 60, 75),
+    );
+    draw_rectangle(
+        PANEL_OUTER_X,
+        BOARD_Y,
+        PANEL_OUTER_W,
+        BOARD_H,
+        rgb(18, 18, 26),
+    );
+}
+
 /// The locked board: background, grid lines, and every settled cell. No text at all —
 /// see the `board_cache` comment in `amain` for why that matters.
 fn draw_board_static(board: &Board) {
@@ -994,32 +1033,10 @@ fn draw_hud(session: &Session, control: &control::Control) {
         draw_text(&speed, WIN_W - 20.0 - sd.width, 46.0, 20.0, dim);
     }
 
-    // The panel container: same border/fill treatment as the board, spanning its full
-    // height. Without this, the panel's actual content (next-piece boxes + a handful of
-    // stat lines) only fills the top third or so of the board's height, leaving a tall
-    // stretch of bare background beneath it that reads as extra empty space on the right
-    // — even though the board and panel are already horizontally centered as a pair.
-    draw_rectangle(
-        PANEL_OUTER_X - 1.0,
-        BOARD_Y - 1.0,
-        PANEL_OUTER_W + 2.0,
-        BOARD_H + 2.0,
-        rgb(60, 60, 75),
-    );
-    draw_rectangle(
-        PANEL_OUTER_X,
-        BOARD_Y,
-        PANEL_OUTER_W,
-        BOARD_H,
-        rgb(18, 18, 26),
-    );
+    draw_panel_frame();
 
     draw_text("NEXT", PANEL_X, BOARD_Y + 16.0, 20.0, dim);
     let mut y = BOARD_Y + 26.0;
-    // Classic (NES-era) Tetris convention: one next piece, not a modern-guideline
-    // multi-piece queue — see games/tetris/CLAUDE.md. Box is taller than the old
-    // per-slot 68px so the single preview doesn't read as shrunken inside the panel.
-    const NEXT_BOX_H: f32 = 96.0;
     if let Some(&piece) = session.game.queue.front() {
         draw_rectangle(PANEL_X, y, PANEL_W, NEXT_BOX_H, rgb(24, 24, 32));
         draw_piece_preview(PANEL_X, y, PANEL_W, NEXT_BOX_H, piece);
@@ -1079,4 +1096,30 @@ fn draw_game_over(over_t: f32, daily_mode: bool) {
 fn draw_opening_title() {
     let text = rgb(210, 210, 225);
     draw_text("TETRIS", BOARD_X, 46.0, 34.0, text);
+}
+
+/// Opening-screen counterpart to `draw_hud`'s side panel: same frame, "NEXT" box (a
+/// cosmetic preview, `DemoBoard::next_preview` — there's no real `Session`/`Game` yet
+/// to have an actual queue), and zeroed-out stat lines. `GEN 0`, not `GEN 1` — the HUD's
+/// own display is `generation + 1` (so a fresh game's first real frame reads `GEN 1`),
+/// but the opening screen is *before* that first generation exists at all, and `0` reads
+/// as "nothing started yet" rather than implying a generation already happened. Without
+/// this the panel's whole column reads as missing/blank during loading — the same
+/// "extra empty space" problem `draw_panel_frame`'s own doc comment describes for real
+/// gameplay — and the panel visibly pops into existence the moment the intro ends.
+fn draw_opening_panel(demo: &DemoBoard) {
+    let text = rgb(210, 210, 225);
+    let dim = rgb(140, 140, 160);
+
+    draw_panel_frame();
+    draw_text("NEXT", PANEL_X, BOARD_Y + 16.0, 20.0, dim);
+    let y = BOARD_Y + 26.0;
+    draw_rectangle(PANEL_X, y, PANEL_W, NEXT_BOX_H, rgb(24, 24, 32));
+    draw_piece_preview(PANEL_X, y, PANEL_W, NEXT_BOX_H, demo.next_preview);
+
+    let mut y = y + NEXT_BOX_H + 16.0;
+    for line in ["SCORE  0", "LINES  0", "LEVEL  0", "GEN  0"] {
+        draw_text(line, PANEL_X, y, 20.0, text);
+        y += 28.0;
+    }
 }
