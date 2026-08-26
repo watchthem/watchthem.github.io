@@ -301,6 +301,121 @@ impl View {
     }
 }
 
+/// Purely cosmetic board animation for the opening screen (see `amain`'s intro wait
+/// loop) — the classic attract-mode look, in three beats that repeat for as long as the
+/// intro plays: the board starts **pre-filled** (a random full pattern, every row
+/// guaranteed at least one empty cell so nothing ever reads as a complete line, visible
+/// immediately, no reveal-from-nothing animation); a **flood** then sweeps bottom-to-top,
+/// converting each row it passes from that scattered piece-color pattern into one flat
+/// **solid-color line**; once the whole board is solid, a **drain** sweeps top-to-bottom,
+/// emptying each row it passes; once the board is fully empty, a fresh random pattern
+/// appears and the cycle repeats. Never touches `Session`/`Game`; real gameplay only
+/// starts once the intro finishes.
+///
+/// Uses its own `audio::Rng` rather than `macroquad::rand`'s global generator
+/// deliberately — that one is seeded from `control.seed()` for deterministic gameplay
+/// replay, and drawing from it here (at an unpredictable, frame-rate-dependent rate)
+/// would shift every subsequent real piece the solver sees, breaking `HCG_SEED`
+/// reproducibility for a purely decorative effect (same reasoning as `lib/audio`'s own
+/// `rng.rs`).
+struct DemoBoard {
+    /// This cycle's scattered piece-color content, guaranteed no complete rows.
+    pattern: Board,
+    /// This cycle's flood color, one per row (picked once per cycle, not per frame, so
+    /// a given row stays one solid color for the whole flood/drain sweep).
+    row_colors: [Color; H],
+    rng: audio::Rng,
+    draining: bool,
+    /// While flooding: rows `[line, H)` are solid (already swept), `[0, line)` still
+    /// show `pattern`. Moves `H -> 0` (sweeping bottom-to-top, growing the solid region
+    /// upward). While draining: rows `[0, line)` are empty (already swept), `[line, H)`
+    /// are still solid. Moves `0 -> H` (sweeping top-to-bottom, growing the empty
+    /// region downward) before a fresh pattern is generated and flooding restarts.
+    line: f32,
+}
+
+/// What one row currently looks like — see `DemoBoard::row_state`.
+enum DemoRow {
+    Pattern,
+    Solid,
+    Empty,
+}
+
+impl DemoBoard {
+    /// Full sweep (20 rows) takes 20 / 3 ≈ 6.7s, one full flood+drain cycle ≈ 13.3s —
+    /// deliberately *longer* than `sound::INTRO_SECS` (~8.3s) so the cycle never
+    /// resets to a fresh pattern mid-intro: a visitor sees one continuous flood (and
+    /// the start of the drain), never a visible loop-back. An earlier draft (6
+    /// rows/sec, ~6.7s/cycle) was tuned the opposite way — to guarantee at least one
+    /// full loop played out — which read as a repeat/reset instead of one smooth rise.
+    const ROWS_PER_SEC: f32 = 3.0;
+    /// Chance any given cell is filled, before the guaranteed-empty-column exclusion
+    /// below — tuned to look like a dense but clearly gappy board, not a solid wall.
+    const FILL_CHANCE: f32 = 0.55;
+
+    fn new(seed: u64) -> Self {
+        let mut rng = audio::Rng::new(seed);
+        let (pattern, row_colors) = Self::random_cycle(&mut rng);
+        Self {
+            pattern,
+            row_colors,
+            rng,
+            draining: false,
+            line: H as f32,
+        }
+    }
+
+    /// A full board with every row guaranteed at least one empty cell (picked before
+    /// the random fill, so it always stays empty) — the "no complete lines" constraint
+    /// this animation depends on to never accidentally look like a real clear — plus
+    /// this cycle's per-row flood colors.
+    fn random_cycle(rng: &mut audio::Rng) -> (Board, [Color; H]) {
+        let mut board: Board = [[None; W]; H];
+        for row in board.iter_mut() {
+            let guaranteed_empty = rng.index(W);
+            for (c, cell) in row.iter_mut().enumerate() {
+                if c != guaranteed_empty && rng.next_f32() < Self::FILL_CHANCE {
+                    *cell = Some(Piece::ALL[rng.index(Piece::ALL.len())]);
+                }
+            }
+        }
+        let mut row_colors = [WHITE; H];
+        for color in row_colors.iter_mut() {
+            *color = piece_color(Piece::ALL[rng.index(Piece::ALL.len())]);
+        }
+        (board, row_colors)
+    }
+
+    fn update(&mut self, dt: f32) {
+        if self.draining {
+            self.line += dt * Self::ROWS_PER_SEC;
+            if self.line >= H as f32 {
+                let (pattern, row_colors) = Self::random_cycle(&mut self.rng);
+                self.pattern = pattern;
+                self.row_colors = row_colors;
+                self.line = H as f32;
+                self.draining = false;
+            }
+        } else {
+            self.line -= dt * Self::ROWS_PER_SEC;
+            if self.line <= 0.0 {
+                self.line = 0.0;
+                self.draining = true;
+            }
+        }
+    }
+
+    fn row_state(&self, r: usize) -> DemoRow {
+        let above_line = (r as f32) < self.line;
+        match (self.draining, above_line) {
+            (false, true) => DemoRow::Pattern, // not yet flooded
+            (false, false) => DemoRow::Solid,  // flooded
+            (true, true) => DemoRow::Empty,    // already drained
+            (true, false) => DemoRow::Solid,   // not yet drained
+        }
+    }
+}
+
 // ── CLI args (native only — meaningless in a browser tab) ───────────────────────
 
 pub struct CliArgs {
@@ -501,7 +616,7 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
 
     // A screenshot/clip capture wants actual gameplay in its fixed time window, not a
     // title screen — and playing a jingle nobody's listening to just wastes the render
-    // budget those captures often run under.
+    // budget those captures often run under. Skip both the sound and the wait entirely.
     let capturing = screenshot::is_capturing();
 
     // Loaded once per page/process load, not per episode restart — a title-screen jingle
@@ -548,6 +663,35 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
         BOARD_W + 2.0,
         BOARD_H + 2.0,
     ));
+
+    // Hold on an opening screen for as long as `intro` plays instead of starting the
+    // game underneath it — skipped entirely (0-length wait) during a capture (per
+    // `capturing` above), on the wall (already muted above; a visitor there gets a live
+    // tile, not a title card), and for a daily-challenge visitor (`?daily=1` — "today's
+    // puzzle" should start immediately, not queue behind a jingle; the intro sound
+    // itself still plays for daily mode, just without blocking gameplay on it).
+    // `control.handle_keys()`/`exit_requested()` still run so Esc (native shell) works
+    // even before the first piece has spawned. The board area shows `DemoBoard`'s
+    // purely cosmetic flood-and-drain animation instead of a progress bar — the real
+    // board's position/size, but no `Session`/`Game` involved.
+    let mut intro_elapsed = 0.0f32;
+    let skip_opening = capturing || control.stream_mode() || control.daily_mode();
+    let intro_wait = if skip_opening { 0.0 } else { sound::INTRO_SECS };
+    let mut demo = DemoBoard::new(macroquad::miniquad::date::now() as u64);
+    while intro_elapsed < intro_wait {
+        control.handle_keys();
+        if let Some(reason) = control.exit_requested() {
+            return reason;
+        }
+        let dt = get_frame_time();
+        intro_elapsed += dt;
+        demo.update(dt);
+        clear_background(rgb(15, 15, 20));
+        draw_opening_title();
+        draw_demo_board(&demo);
+        control.draw_overlay();
+        next_frame().await;
+    }
 
     do_advance(&mut view, &mut session, &mut control, true);
     board_cache.mark_dirty();
@@ -678,13 +822,13 @@ fn draw_cell(x: f32, y: f32, color: Color) {
     draw_rectangle(x + 1.0, y + 1.0, CELL - 2.0, CELL - 2.0, color);
 }
 
-/// Bordered background + interior grid lines shared by `draw_board_static` and (once
-/// the opening screen lands) its cosmetic-animation counterpart. Interior lines only
-/// (1..W / 1..H, not 0..=W / 0..=H) — the outer edges are already marked by the border
-/// rect; drawing a grid line directly on top of it there partially overwrote the
-/// border, and asymmetrically enough between the left/right edges (line rasterization
-/// doesn't split a 1px line evenly across a coordinate) that the left border ended up
-/// visibly thinner than the right.
+/// Bordered background + interior grid lines shared by `draw_board_static` (real
+/// gameplay) and `draw_demo_board` (the opening screen). Interior lines only (1..W /
+/// 1..H, not 0..=W / 0..=H) — the outer edges are already marked by the border rect;
+/// drawing a grid line directly on top of it there partially overwrote the border, and
+/// asymmetrically enough between the left/right edges (line rasterization doesn't split
+/// a 1px line evenly across a coordinate) that the left border ended up visibly thinner
+/// than the right.
 fn draw_board_frame() {
     draw_rectangle(
         BOARD_X - 1.0,
@@ -718,6 +862,37 @@ fn draw_board_static(board: &Board) {
                     piece_color(*piece),
                 );
             }
+        }
+    }
+}
+
+/// `DemoBoard`'s per-row `Pattern`/`Solid`/`Empty` state — see that type's own doc
+/// comment for the three-beat animation this draws one frame of.
+fn draw_demo_board(demo: &DemoBoard) {
+    draw_board_frame();
+    for r in 0..H {
+        match demo.row_state(r) {
+            DemoRow::Pattern => {
+                for (c, cell) in demo.pattern[r].iter().enumerate() {
+                    if let Some(piece) = cell {
+                        draw_cell(
+                            BOARD_X + c as f32 * CELL,
+                            BOARD_Y + r as f32 * CELL,
+                            piece_color(*piece),
+                        );
+                    }
+                }
+            }
+            DemoRow::Solid => {
+                draw_rectangle(
+                    BOARD_X + 1.0,
+                    BOARD_Y + r as f32 * CELL + 1.0,
+                    BOARD_W - 2.0,
+                    CELL - 2.0,
+                    demo.row_colors[r],
+                );
+            }
+            DemoRow::Empty => {}
         }
     }
 }
@@ -876,4 +1051,15 @@ fn draw_game_over(over_t: f32, daily_mode: bool) {
         18.0,
         rgb(210, 210, 225),
     );
+}
+
+/// Opening-screen title, positioned exactly where `draw_hud` draws the real in-game
+/// title (`BOARD_X`, 46.0, size 34) so the transition into gameplay doesn't jump — the
+/// board area below it is `DemoBoard`'s flood-and-clear animation (`draw_board_static`
+/// + `draw_flash`, drawn directly by `amain`'s wait loop), not drawn here.
+fn draw_opening_title() {
+    let text = rgb(210, 210, 225);
+    let dim = rgb(140, 140, 160);
+    draw_text("TETRIS", BOARD_X, 46.0, 34.0, text);
+    draw_text("a Russian folk tune, jazz-comped", BOARD_X, 72.0, 18.0, dim);
 }

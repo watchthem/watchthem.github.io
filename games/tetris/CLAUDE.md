@@ -140,6 +140,24 @@ batch) — cut it to 1 long task of 119ms. `next_frame()` needs `Sfx::load` to o
 inside the real windowed loop (`amain`), never `run_headless` — it has no event loop to
 yield into there.
 
+## Opening screen
+
+`amain` waits `sound::INTRO_SECS` before spawning the first piece, drawing
+`draw_opening_title` + `draw_demo_board` instead. Skipped (gameplay starts right away):
+screenshot/clip capture (`screenshot::is_capturing()`, also skips `intro` — nobody's
+listening), the ambient wall (`stream_mode()`, `?embed=1`/`?stream=1` — already muted,
+see Sound above), and daily challenge (`daily_mode()`, `?daily=1` — `intro` still
+plays, just doesn't block gameplay).
+
+`DemoBoard`: cosmetic only, never touches `Session`/`Game`, own `audio::Rng` (not
+`macroquad::rand`'s global one — that's seeded for deterministic replay; drawing from
+it here would shift every real piece). Three beats, looping: board is **pre-filled**
+(random, every row missing >=1 cell so nothing reads as a real line) and visible right
+away; a **flood** sweeps bottom-to-top turning each row solid-color; a **drain** sweeps
+top-to-bottom emptying rows; repeats with a fresh pattern. `ROWS_PER_SEC = 3.0` keeps
+one full cycle (~13.3s) *longer* than the intro (~8.3s) on purpose — a visitor sees one
+continuous flood into a partial drain, never the reset back to a fresh pattern.
+
 ## Gotchas
 
 - `gen` is a reserved keyword since the 2024 edition (future generator-block syntax) —

@@ -87,6 +87,12 @@ const A5: f32 = 12.0;
 /// these (`MEASURE_SECS`), which is what lets the two be mixed with no manual alignment.
 const EIGHTH: f32 = 0.13;
 const MEASURE_SECS: f32 = 8.0 * EIGHTH;
+const NUM_MEASURES: f32 = 8.0;
+
+/// Total length of `intro` — `lib.rs` holds gameplay off the opening screen for this
+/// long (skipped entirely, along with the sound itself, during a screenshot/clip
+/// capture — see `screenshot::is_capturing`).
+pub const INTRO_SECS: f32 = MEASURE_SECS * NUM_MEASURES;
 
 /// The widely-recognized opening phrase of "Korobeiniki" — the tune most people just
 /// call "the Tetris theme" (Game Boy Tetris's Type A music, 1989). A traditional
