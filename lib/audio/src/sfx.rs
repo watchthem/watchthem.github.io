@@ -15,6 +15,7 @@ use crate::synth::{Envelope, Waveform};
 pub enum SfxWave {
     Square { duty: f32 },
     Triangle,
+    Sine,
     Sawtooth,
     Noise,
 }
@@ -24,6 +25,7 @@ impl From<SfxWave> for Waveform {
         match w {
             SfxWave::Square { duty } => Waveform::Square { duty },
             SfxWave::Triangle => Waveform::Triangle,
+            SfxWave::Sine => Waveform::Sine,
             SfxWave::Sawtooth => Waveform::Sawtooth,
             SfxWave::Noise => Waveform::Noise,
         }

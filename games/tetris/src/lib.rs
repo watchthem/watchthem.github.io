@@ -4,6 +4,7 @@ use render_cache::RenderCache;
 mod game;
 mod generator;
 mod solver;
+mod sound;
 
 use game::{Board, Game, H, Phase, Piece, W, full_rows, place_cells, rotation_states};
 use generator::{GenMode, PieceGenerator};
@@ -487,6 +488,55 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
     let mut view = View::new(&session);
     let mut shot = screenshot::Capture::from_env();
 
+    // The ambient wall (`?embed=1`/`?stream=1`) runs up to 11 of these simultaneously as
+    // iframes — one tile's jingle/SFX would be noise on its own, let alone eleven at
+    // once layered together. Muting here (rather than at each individual play call)
+    // reuses `audio::playback`'s existing global gate, the same one `M` toggles — every
+    // `Clip::play_once`/`play_looped` for the rest of this session becomes a no-op with
+    // zero changes needed at any of those call sites. `stream_mode()` is read once at
+    // startup and never changes mid-session, so setting this once here is enough.
+    if control.stream_mode() {
+        audio::playback::set_muted(true);
+    }
+
+    // A screenshot/clip capture wants actual gameplay in its fixed time window, not a
+    // title screen — and playing a jingle nobody's listening to just wastes the render
+    // budget those captures often run under.
+    let capturing = screenshot::is_capturing();
+
+    // Loaded once per page/process load, not per episode restart — a title-screen jingle
+    // that replayed every ~seconds (the AI restarts a finished episode automatically)
+    // would be exhausting rather than "typical". See games/tetris/src/sound.rs.
+    let sfx = sound::Sfx::load(FLASH_DUR).await;
+    if !capturing {
+        sfx.intro.play_once(0.6);
+    }
+
+    // Every `View::advance` call commits a piece to fall — playing `drop` right here,
+    // once, immediately, rather than syncing it to a mid-animation `fall.t` threshold
+    // (the first draft's approach) guarantees it always fires before any outcome sound
+    // for *that* piece (`lock`/`clear[..]`/`game_over`, all gated on `fall.t` reaching
+    // 1.0 on some later frame): those can only ever be checked after this closure has
+    // already returned. A real Tetris's hard-drop sound is a crisp, immediate cue tied
+    // to the drop being committed, not something smeared across a slow cosmetic
+    // descent — this also reads closer to that.
+    // `play_drop` is `false` only for the call right after a non-clearing `lock`: that
+    // branch already just played `lock` (also a low thump — `chiptune::kick`) the
+    // instant before calling this, so `drop` for the newly-spawned piece would fire
+    // within the same frame, layering two bass thumps into what reads as one thump plus
+    // an unwanted extra click. Every other call site (initial load, reseed, variant
+    // switch, post-clear-flash, game-over restart) has no `lock` immediately before it,
+    // so `drop` alone is the right cue there.
+    let do_advance = |view: &mut View,
+                      session: &mut Session,
+                      control: &mut control::Control,
+                      play_drop: bool| {
+        view.advance(session, control, cli.debug);
+        if play_drop && view.phase == ViewPhase::Falling {
+            sfx.drop.play_once(0.4);
+        }
+    };
+
     // The locked board (up to 200 flat-colored cells, no text) is redrawn only when a
     // piece finishes falling/flashing, not every render frame — see `render_cache` and
     // `games/snake/src/main.rs` for the same pattern on an equally text-free board. The
@@ -499,7 +549,7 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
         BOARD_H + 2.0,
     ));
 
-    view.advance(&mut session, &mut control, cli.debug);
+    do_advance(&mut view, &mut session, &mut control, true);
     board_cache.mark_dirty();
 
     loop {
@@ -511,7 +561,7 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
             rand::srand(seed);
             session = Session::new(session.mode, 0);
             view = View::new(&session);
-            view.advance(&mut session, &mut control, cli.debug);
+            do_advance(&mut view, &mut session, &mut control, true);
             board_cache.mark_dirty();
         }
         let dt = control.scale(get_frame_time());
@@ -519,21 +569,42 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
         if is_key_pressed(KeyCode::V) || control.variant_swipe() {
             session = session.switch_variant();
             view = View::new(&session);
-            view.advance(&mut session, &mut control, cli.debug);
+            do_advance(&mut view, &mut session, &mut control, true);
             board_cache.mark_dirty();
         }
 
         match view.phase {
             ViewPhase::Falling => {
                 if let Some(fall) = &mut view.fall {
+                    let prev_t = fall.t;
                     fall.t = (fall.t + dt * ANIM_SPEED).min(1.0);
+                    // Sonifies `FallAnim::pose`'s rotate beat; the drop sound itself
+                    // fires earlier, at commit time — see `do_advance`. Only when the
+                    // piece's shape actually changes — a piece that spawns already in
+                    // its landing orientation still hits this beat visually (the pose
+                    // snap is a no-op), but playing a "rotate" click for a piece that
+                    // never rotated is both semantically wrong and, since it happens on
+                    // most drops, the main source of an unwanted extra click piggybacking
+                    // on the drop sound's tail — see `sound.rs`'s `drop` comment.
+                    if prev_t < ROTATE_FRAC
+                        && fall.t >= ROTATE_FRAC
+                        && fall.spawn_shape != fall.target_shape
+                    {
+                        sfx.rotate.play_once(0.5);
+                    }
                     if fall.t >= 1.0 {
                         if view.cleared_rows.is_empty() {
+                            sfx.lock.play_once(0.5);
                             view.settled = session.game.board;
                             board_cache.mark_dirty();
-                            view.advance(&mut session, &mut control, cli.debug);
+                            do_advance(&mut view, &mut session, &mut control, false);
                             board_cache.mark_dirty();
+                            if view.phase == ViewPhase::GameOver {
+                                sfx.game_over.play_once(0.7);
+                            }
                         } else {
+                            let idx = (view.cleared_rows.len() - 1).min(3);
+                            sfx.clear[idx].play_once(0.7);
                             view.settled = view.locked_board;
                             view.flash_t = 0.0;
                             view.phase = ViewPhase::Flash;
@@ -547,8 +618,11 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
                 if view.flash_t >= FLASH_DUR {
                     view.settled = session.game.board;
                     board_cache.mark_dirty();
-                    view.advance(&mut session, &mut control, cli.debug);
+                    do_advance(&mut view, &mut session, &mut control, true);
                     board_cache.mark_dirty();
+                    if view.phase == ViewPhase::GameOver {
+                        sfx.game_over.play_once(0.7);
+                    }
                 }
             }
             ViewPhase::GameOver => {
@@ -566,7 +640,7 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
                     if view.over_t <= 0.0 {
                         session = session.next_generation();
                         view = View::new(&session);
-                        view.advance(&mut session, &mut control, cli.debug);
+                        do_advance(&mut view, &mut session, &mut control, true);
                         board_cache.mark_dirty();
                     }
                 }
@@ -604,9 +678,14 @@ fn draw_cell(x: f32, y: f32, color: Color) {
     draw_rectangle(x + 1.0, y + 1.0, CELL - 2.0, CELL - 2.0, color);
 }
 
-/// The locked board: background, grid lines, and every settled cell. No text at all —
-/// see the `board_cache` comment in `amain` for why that matters.
-fn draw_board_static(board: &Board) {
+/// Bordered background + interior grid lines shared by `draw_board_static` and (once
+/// the opening screen lands) its cosmetic-animation counterpart. Interior lines only
+/// (1..W / 1..H, not 0..=W / 0..=H) — the outer edges are already marked by the border
+/// rect; drawing a grid line directly on top of it there partially overwrote the
+/// border, and asymmetrically enough between the left/right edges (line rasterization
+/// doesn't split a 1px line evenly across a coordinate) that the left border ended up
+/// visibly thinner than the right.
+fn draw_board_frame() {
     draw_rectangle(
         BOARD_X - 1.0,
         BOARD_Y - 1.0,
@@ -615,7 +694,21 @@ fn draw_board_static(board: &Board) {
         rgb(60, 60, 75),
     );
     draw_rectangle(BOARD_X, BOARD_Y, BOARD_W, BOARD_H, rgb(18, 18, 26));
+    let grid = rgb(35, 35, 46);
+    for c in 1..W {
+        let x = BOARD_X + c as f32 * CELL;
+        draw_line(x, BOARD_Y, x, BOARD_Y + BOARD_H, 1.0, grid);
+    }
+    for r in 1..H {
+        let y = BOARD_Y + r as f32 * CELL;
+        draw_line(BOARD_X, y, BOARD_X + BOARD_W, y, 1.0, grid);
+    }
+}
 
+/// The locked board: background, grid lines, and every settled cell. No text at all —
+/// see the `board_cache` comment in `amain` for why that matters.
+fn draw_board_static(board: &Board) {
+    draw_board_frame();
     for (r, row) in board.iter().enumerate() {
         for (c, cell) in row.iter().enumerate() {
             if let Some(piece) = cell {
@@ -626,21 +719,6 @@ fn draw_board_static(board: &Board) {
                 );
             }
         }
-    }
-
-    // Interior lines only (1..W / 1..H, not 0..=W / 0..=H) — the outer edges are already
-    // marked by the border rect above; drawing a grid line directly on top of it there
-    // partially overwrote the border, and asymmetrically enough between the left/right
-    // edges (line rasterization doesn't split a 1px line evenly across a coordinate) that
-    // the left border ended up visibly thinner than the right.
-    let grid = rgb(35, 35, 46);
-    for c in 1..W {
-        let x = BOARD_X + c as f32 * CELL;
-        draw_line(x, BOARD_Y, x, BOARD_Y + BOARD_H, 1.0, grid);
-    }
-    for r in 1..H {
-        let y = BOARD_Y + r as f32 * CELL;
-        draw_line(BOARD_X, y, BOARD_X + BOARD_W, y, 1.0, grid);
     }
 }
 

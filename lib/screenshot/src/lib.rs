@@ -18,6 +18,17 @@ unsafe extern "C" {
     );
 }
 
+/// True when this run is capturing a screenshot or clip (`HCG_SCREENSHOT`/
+/// `HCG_CLIP_FIFO` set — same detection `Capture::from_env` uses). For anything a game
+/// wants to skip specifically *because* it's non-deterministic or time-consuming during
+/// an automated capture — e.g. a game's own intro jingle/opening-screen delay, which
+/// would otherwise push every capture's "after a few seconds" frame earlier into a
+/// still-not-started game, or just waste the fixed capture window sitting on a title
+/// screen instead of showing actual gameplay.
+pub fn is_capturing() -> bool {
+    std::env::var("HCG_SCREENSHOT").is_ok() || stream_mode_from_env().is_some()
+}
+
 /// RNG seed: `HCG_SEED` env override for reproducible screenshots, else wall-clock.
 /// `std::time::SystemTime::now()` panics on WASM, so this always goes through miniquad's clock.
 pub fn seed() -> u64 {

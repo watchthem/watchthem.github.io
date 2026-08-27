@@ -63,6 +63,83 @@ descending (`ROTATE_FRAC`/`SLIDE_FRAC`) → accelerating hard-drop the rest of t
 prewarm needed for it) — the falling piece and line-clear flash stay live per-frame
 draws on top, same split as klondike/spider's card table.
 
+## Sound (`sound.rs`)
+
+Procedural audio via `lib/audio` (oscillator/envelope engine), synthesized at startup,
+no asset files. Every clip triggers off game *status*, not the solver directly — same
+points a human-played game would hit.
+
+| Clip | Trigger |
+|---|---|
+| `intro` | Once per load, before gameplay starts |
+| `rotate` | Piece snaps to rotated shape (`fall.t` crosses `ROTATE_FRAC`) |
+| `drop` | Piece committed to fall (inside `do_advance`, not mid-animation) |
+| `lock` | Piece settles, no clear |
+| `clear[0..3]` | Line clear, indexed by `lines_cleared - 1` |
+| `game_over` | Episode ends |
+
+Low-register, percussion-first — a tonal/melodic sound repeats on every routine event
+and reads as grating; save melody for rare moments only. `rotate`/`lock` are filtered
+noise/kick thumps, not tones. `clear` is `sound::explosion`: noise rumble + sub-bass
+boom, pinned to exactly `FLASH_DUR` (the visual flash's own length) so sound and blink
+match regardless of clear size, with a swept low-pass (bright crack -> dull rumble, one
+continuous IIR pass — chunking would click at boundaries) so it reads as an explosion,
+not another `lock` thump. `do_advance` skips `drop` right after a `lock` — both are bass
+thumps, playing them in the same frame doubled up as an extra click.
+
+`drop`'s envelope is kept under ~0.083s (`ROTATE_FRAC * (1 / ANIM_SPEED)`, `lib.rs`) on
+purpose: `rotate` fires at that real-time offset on *every* piece (`FallAnim::pose`'s
+snap happens whether or not the piece actually rotates), so a longer `drop` envelope had
+its release tail still sounding when `rotate`'s own onset (a real click, by design)
+landed on top of it — heard as one "hit" that's too long with a stray click stapled to
+the end. `lib.rs` also gates `rotate` on `fall.spawn_shape != fall.target_shape` so a
+piece that spawns already in its landing orientation stays silent there instead of
+firing a "rotate" cue for a rotation that never happened.
+
+`intro` = "Korobeiniki" (Коробе́йники, ~1861 Russian folk tune, public domain — the real
+Tetris theme), transcribed fresh in `korobeiniki()`, 8 measures each exactly
+`MEASURE_SECS`. `CHORD_GUIDE_TONES` jazz-harmonizes one chord per measure as just the
+3rd+7th (guide tones — the two notes that define a chord's color; a full triad reads as
+muddy under one melody line). Comp envelope fractions must sum to `1.0 * MEASURE_SECS`
+exactly or it drifts out of sync with the melody — regression-tested
+(`comp_track_len_matches_melody_len_per_measure`). Square-wave lead gets a light
+low-pass + reduced sustain so it doesn't read as harsh/clippy.
+
+`korobeiniki_track`'s final `normalize_peak` target is `0.65`, not the more obvious
+`0.85`-ish — real headroom, not style. Every note's ADSR ramps to full `1.0` gain at
+the *end of attack* regardless of `sustain_level` (sustain only caps the plateau after
+decay), so a busy melody has many moments near the true peak, not one.
+`normalize_peak` only sees discrete sample values, not inter-sample ("true peak")
+overshoot introduced when a decoder reconstructs the waveform between samples — square
+waves (steep edges, strong high harmonics) are exactly the content most prone to that.
+Too little margin here reads as distortion at the loudest moments, not literal clipping
+you'd see in the sample data.
+
+**Fixing a bad chord**: check every guide tone against every melody note in that
+measure as a semitone class (0-11) — a clash is exactly `1` or `11` apart. Only OK if
+the *next* chord resolves it; a clash that just sits there for a full measure is a bug.
+Watch for the subtler version too: a chord can be clash-free yet still not resolve
+where the *melody itself* actually lands (e.g. the closing note) — check what the tune
+is really centered on, not just adjacent notes. Prefer octave-shifting a guide tone (12
+semitones) for smoother voice-leading over adding a 3rd note. Iterate by listening
+(`mise run run tetris`) — code-reading alone won't tell you if a harmony works.
+
+**Gotcha**: macroquad's `audio` feature is off by default. Missing it silently no-ops
+every `play_sound` call (stderr warning, no crash) instead of failing loudly — grep for
+`"feature disabled"` if sound seems to do nothing.
+
+**"Buffer underrun"-sounding artifacts at page load**: `Sfx::load` used to synthesize all
+9 clips back-to-back, only `.await`ing (yielding to the browser) once all 9 were already
+rendered. Measured via Playwright + a `longtask` `PerformanceObserver`: 3 main-thread
+long tasks (230/82/116ms) in the first ~650ms of a real page load — not a glitch in the
+rendered samples themselves (a `scan_for_clicks`-style sample-diff scan found zero
+discontinuities). Fixed by loading each clip (`Clip::from_samples`, already a yield
+point) right after synthesizing it instead of synthesizing all 9 first, plus an extra
+`next_frame().await` after the two heaviest chunks (`intro`, the 4-explosion `clear`
+batch) — cut it to 1 long task of 119ms. `next_frame()` needs `Sfx::load` to only run
+inside the real windowed loop (`amain`), never `run_headless` — it has no event loop to
+yield into there.
+
 ## Gotchas
 
 - `gen` is a reserved keyword since the 2024 edition (future generator-block syntax) —

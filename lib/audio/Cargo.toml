@@ -4,5 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-macroquad = "0.4"
+# quad-snd (macroquad's audio backend) is behind a feature flag, off by default — without
+# it every macroquad::audio call silently no-ops with a "feature disabled" warning.
+macroquad = { version = "0.4", features = ["audio"] }
 hound = "3"
