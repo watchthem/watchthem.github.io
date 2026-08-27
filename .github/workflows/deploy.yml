@@ -38,11 +38,21 @@ jobs:
 
       # xvfb + a software GL driver give macroquad/miniquad a real GLX context with no
       # physical display, so games can be run natively to capture screenshots in CI.
-      # libasound2-dev: native link dep pulled in via lib/audio -> quad-snd -> quad-alsa-sys.
+      # libasound2-dev: link dep pulled in via lib/audio -> macroquad "audio" feature ->
+      # quad-snd -> quad-alsa-sys (feature-unified across the whole workspace, so every
+      # game's native build links -lasound now, not just tetris).
       - name: Install headless screenshot dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libgl1 libglx-mesa0 libgl1-mesa-dri libasound2-dev
+
+      # macroquad creates quad-snd's AudioContext eagerly at window init (before any game
+      # loads a sound), and quad-snd's ALSA backend panics ("Can't open PCM device") when
+      # snd_pcm_open finds no card — which is every headless CI runner. Route the default
+      # PCM/CTL to the built-in null plugin so the open succeeds and audio silently no-ops.
+      - name: Provide a null ALSA device
+        run: |
+          printf 'pcm.!default { type plug slave.pcm "null" }\nctl.!default { type null }\n' | sudo tee /etc/asound.conf
 
       # resvg rasterizes the homepage hero SVG to a PNG for social-preview meta tags.
       - name: Install resvg
