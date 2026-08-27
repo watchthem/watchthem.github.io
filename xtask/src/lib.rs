@@ -304,6 +304,7 @@ pub fn hotkey_popup(name: &str) -> Markup {
                     dt { "-" } dd { "slow down" }
                     dt { "0" } dd { "reset speed" }
                     dt { "Space" } dd { "pause / resume" }
+                    dt { "M" } dd { "mute / unmute" }
                     dt { "F" } dd { "toggle fullscreen (or double-click)" }
                     @if has_variant_switch {
                         dt { "V" } dd { "switch game variant" }
@@ -1334,6 +1335,70 @@ pub fn fullscreen_bridge() -> Markup {
                  \x20   document.documentElement.classList.toggle('hcg-fullscreen', hcgIsFullscreen());\n\
                  \x20   hcgUpdateWakeLock();\n\
                  \x20 });\n\
+                 });"
+            )))
+        }
+    }
+}
+
+/// Wraps `window.AudioContext`/`webkitAudioContext` so whatever instance quad-snd's own
+/// (bundled-into-`mq_js_bundle.js`) audio backend constructs gets captured into
+/// `window.__hcgAudioCtx` — nothing on the page has any other way to reach it, since
+/// quad-snd never hands the context back out. Must run **before**
+/// `script src="../mq_js_bundle.js"`, not after like every other bridge here: it has to
+/// already be in place by the time that script (or anything the wasm module later
+/// triggers) does `new AudioContext()`. Reading `window.AudioContext` fresh at call time
+/// (rather than caching a reference before this runs) is what every real caller does, so
+/// wrapping the global is enough regardless of exactly when quad-snd constructs its
+/// context. Harmless if no `AudioContext` constructor exists at all (very old browsers) —
+/// the wrapper just never gets installed, and `audio_mute_bridge`'s bridge below already
+/// no-ops when `window.__hcgAudioCtx` never got set.
+pub fn audio_context_capture_script() -> Markup {
+    html! {
+        script {
+            (PreEscaped(minify_js(
+                "(function() {\n\
+                 \x20 var Orig = window.AudioContext || window.webkitAudioContext;\n\
+                 \x20 if (!Orig) return;\n\
+                 \x20 function Wrapped() {\n\
+                 \x20   var ctx = new Orig(...arguments);\n\
+                 \x20   window.__hcgAudioCtx = ctx;\n\
+                 \x20   return ctx;\n\
+                 \x20 }\n\
+                 \x20 Wrapped.prototype = Orig.prototype;\n\
+                 \x20 window.AudioContext = Wrapped;\n\
+                 \x20 window.webkitAudioContext = Wrapped;\n\
+                 })();"
+            )))
+        }
+    }
+}
+
+/// `M` hotkey: registers a miniquad plugin exposing `env.hcg_set_audio_muted`, called
+/// from `control::Control::handle_keys` on every mute toggle. Suspends/resumes (not
+/// closes — `AudioContext.close()` is one-way, and quad-snd has no way to be told to
+/// build a fresh one) the context `audio_context_capture_script` captured, which is the
+/// standard Web Audio mechanism for releasing the audio hardware while a page isn't
+/// using it — e.g. so a connected Bluetooth headset isn't held routed to a muted,
+/// silent tab. A no-op (both directions) when `window.__hcgAudioCtx` was never
+/// captured — nothing has played a sound yet, so there's no hardware to release.
+/// Must run after `mq_js_bundle.js` but before `load(...)`, same ordering constraint as
+/// `analytics_bridge`.
+pub fn audio_mute_bridge() -> Markup {
+    html! {
+        script {
+            (PreEscaped(minify_js(
+                "miniquad_add_plugin({\n\
+                 \x20 register_plugin: function(importObject) {\n\
+                 \x20   importObject.env.hcg_set_audio_muted = function(muted) {\n\
+                 \x20     var ctx = window.__hcgAudioCtx;\n\
+                 \x20     if (!ctx) return;\n\
+                 \x20     if (muted) ctx.suspend().catch(function() {});\n\
+                 \x20     else ctx.resume().catch(function() {});\n\
+                 \x20   };\n\
+                 \x20 },\n\
+                 \x20 version: 1,\n\
+                 \x20 name: \"hcg_audio_mute\"\n\
                  });"
             )))
         }

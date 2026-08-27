@@ -422,17 +422,15 @@ klondike/spider's `run_ui`/`amain` for the reference call.
 ## In-game controls (all games)
 
 Every game uses `lib/control` (`Control::new()`, call `handle_keys()` once per frame, feed
-frame time through `scale(dt)`) for hotkeys: `=`/`-` adjust simulation speed 10% per press,
-`0` resets to 1x, `Space` pauses (`scale` returns 0). On native only, `Control` also reads
-`F`/double-click to toggle fullscreen via `macroquad::window::set_fullscreen`. Draw
-`control.label()` (`"x1.000"` / `"PAUSED"`) somewhere in the game's own header, near
-score/level — see any game's `lib.rs` for the pattern (right-aligned, same baseline as
-the existing HUD text).
+frame time through `scale(dt)`) for meta-hotkeys — speed, pause, mute, fullscreen, seed
+replay, variant cycling. **See `lib/control/CLAUDE.md`** for the full hotkey table, the
+mute/fullscreen platform-split mechanics, the known X11 fullscreen bug, and the checklist
+for adding a new hotkey (both popups need updating or one will lie). Draw
+`control.label()` somewhere in the game's own header, near score/level — see any game's
+`lib.rs` for the pattern.
 
 Call `control.episode_complete(game_name, score)` at the point each game resets for a new
-round — fires a `gtag('event', 'episode_complete', {game, episode, score})` call. This goes
-through a tiny miniquad JS plugin (`xtask::analytics_bridge`, registers `env.hcg_ga_event`
-before the wasm module loads) rather than wasm-bindgen; see "WASM caveats" below.
+round — see `lib/control/CLAUDE.md`'s "Analytics" section.
 
 Other analytics are page-level JS in `xtask`, not per-game Rust — `session_signals_bridge`
 (`game_switch`, `session_end`), `wall_analytics_bridge` (`wall_view`, `wall_tile_click`),
@@ -443,48 +441,11 @@ real signal. If an event needs something only the wasm module knows, prefer coun
 inside `analytics_bridge`'s existing `hcg_ga_event` callback — every Rust-side event already
 passes through there — over adding a second wasm export.
 
-`?` toggles a hotkey-reference popup, `Esc` closes it, `S` saves a screenshot, `F`/double-click
-toggles fullscreen — all pure page-level HTML/CSS/JS (`xtask::hotkey_popup`,
-`xtask::screenshot_bridge`, `xtask::fullscreen_bridge`), not drawn by the games themselves.
-Fullscreen specifically **cannot** go through `macroquad::window::set_fullscreen` on WASM —
-that calls `canvas.requestFullscreen()`, and browsers force a fullscreened element to
-`width/height: 100%` via an `!important` UA style that no author CSS can override, which
-stomps the pinned native-resolution canvas box `native_size_style` depends on (see "Canvas
-sizing is load-bearing" below). `fullscreen_bridge` instead fullscreens `<html>`, leaving
-the canvas element — and its own pinned size / `fitCanvas()` scale-to-fit transform —
-untouched. If you add a new hotkey to `control::Control` (or a page-level one), update the
-`dl` in `hotkey_popup()` to match, or the popup will lie.
+## Canvas sizing is load-bearing
 
-**Known upstream bug, not fixable from this repo: native fullscreen is broken on Linux
-X11.** `miniquad`'s X11 backend (`native/linux_x11.rs::set_fullscreen`, confirmed
-unfixed in current upstream `master`, not just the pinned `0.4.10`) interns an *empty*
-X atom instead of `_NET_WM_STATE_FULLSCREEN` when asked to go back to windowed, and
-always sends the EWMH `_NET_WM_STATE` ClientMessage with the "ADD" action (`data[0] =
-1`) instead of "REMOVE" (`0`) — the function's own TODO comment admits going back to
-windowed doesn't really work. It also unconditionally unmaps/remaps the window on
-*every* toggle (both directions), which is almost certainly why a toggle can also cost
-the window input focus — symptoms reported: `F`/double-click sometimes fails to leave
-fullscreen (or flickers back into it), and keys stop being delivered afterward until the
-window is manually refocused or the same key is pressed twice. Wayland's backend
-(`native/linux_wayland.rs`) uses the real `xdg_toplevel` `set_fullscreen`/
-`unset_fullscreen` protocol requests and doesn't have this problem — this is X11
-(including XWayland) specifically. Decided not to patch/vendor `miniquad` over this
-(real fix would mean forking the crate); `Control`'s `FULLSCREEN_TOGGLE_COOLDOWN_SECS`
-debounce (and the mirrored one in `bundle/src/shell.rs`'s menu) softens accidental
-double-toggles but doesn't touch the underlying bug. Revisit if `miniquad` ever fixes
-this upstream, or if the vendor-a-patched-copy option becomes worth it later.
-
-When adding a new selectable mode/variant to an existing game, prefer folding it into an
-existing cycling hotkey (e.g. klondike/spider's `V` variant cycle) over adding a dedicated
-new key — even if the mode should stay out of the *automatic* rotation (an `Auto` mode
-that self-alternates by generation). An explicit key press reaching a mode via the
-existing cycle still counts as "explicit select"; it just shouldn't be something `Auto`
-lands on by itself. Only add a new hotkey if the existing control genuinely can't express
-the distinction.
-
-**Canvas sizing is load-bearing**: games draw at absolute pixel coordinates assuming the
-canvas is exactly their native `window_width`/`window_height` — none of them scale drawing
-calls by `screen_width()`/`screen_height()`. The generated page (`xtask::native_size_style`)
+Games draw at absolute pixel coordinates assuming the canvas is exactly their native
+`window_width`/`window_height` — none of them scale drawing calls by
+`screen_width()`/`screen_height()`. The generated page (`xtask::native_size_style`)
 pins the canvas to that native resolution and fits it to the viewport via CSS
 `transform: scale(...)`, not by stretching to `100vw`/`100vh` — stretching would make the
 canvas's actual backing resolution equal to the raw viewport and crop anything past the

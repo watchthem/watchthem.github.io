@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 macroquad = "0.4"
+audio = { path = "../audio" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 keepawake = "0.6"

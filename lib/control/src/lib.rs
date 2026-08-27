@@ -31,6 +31,11 @@ unsafe extern "C" {
     /// game" — the native half is `Control::popup_open`, read directly since it's a
     /// Rust-side bool there instead of a DOM class to query.
     fn hcg_is_popup_open() -> i32;
+    /// Suspends/resumes the browser's `AudioContext` (see `xtask::audio_mute_bridge`
+    /// and the capture script it depends on) so muting genuinely releases the audio
+    /// hardware — e.g. a connected Bluetooth headset — rather than just silencing
+    /// playback while still holding the device open. `muted` is `0`/`1`.
+    fn hcg_set_audio_muted(muted: i32);
 }
 
 /// Fires a Google Analytics event (`gtag('event', name, params)`) via the small JS plugin
@@ -146,6 +151,10 @@ pub struct Control {
     /// Set for one frame by `Enter` in the editor; a game's loop takes it, reseeds the
     /// global RNG, and restarts its current episode — see `take_reseed()`.
     pending_reseed: Option<u64>,
+    /// `M` toggles this — see `handle_keys`. Mirrored into `audio::playback`'s global
+    /// mute gate (every `Clip` checks it) on every toggle, plus, on WASM, into
+    /// `hcg_set_audio_muted` to suspend/resume the real audio hardware.
+    muted: bool,
 }
 
 /// Why a game's `play_until_exit()` loop returned control to the standalone shell (see
@@ -194,6 +203,7 @@ impl Control {
             seed_editing: false,
             seed_input: String::new(),
             pending_reseed: None,
+            muted: false,
         }
     }
 
@@ -265,6 +275,21 @@ impl Control {
         }
         if is_key_pressed(KeyCode::Space) {
             self.paused = !self.paused;
+        }
+
+        // `M` mutes/unmutes — cross-platform toggle (unlike fullscreen, which is fully
+        // page-level JS on WASM: muting has no external DOM state that can change
+        // behind our back, so there's no need to duplicate the keydown handling in JS
+        // the way fullscreen's `fullscreenchange` reactivity requires). The WASM-only
+        // extra step (releasing the actual audio hardware) is layered on top, same
+        // shape as fullscreen's native-only `wake_lock` extra step below.
+        if is_key_pressed(KeyCode::M) {
+            self.muted = !self.muted;
+            audio::playback::set_muted(self.muted);
+            #[cfg(target_arch = "wasm32")]
+            unsafe {
+                hcg_set_audio_muted(self.muted as i32);
+            }
         }
 
         // Seed editor: `R` opens/closes it, prefilled from the seed actually driving
@@ -531,11 +556,12 @@ impl Control {
     /// called on its own (it doesn't check `popup_open`).
     #[cfg(not(target_arch = "wasm32"))]
     fn draw_popup(&self) {
-        const LINES: [(&str, &str); 10] = [
+        const LINES: [(&str, &str); 11] = [
             ("=", "speed up"),
             ("-", "slow down"),
             ("0", "reset speed"),
             ("Space", "pause / resume"),
+            ("M", "mute / unmute"),
             ("F", "toggle fullscreen (or double-click)"),
             ("V", "switch game variant (games that have one)"),
             ("R", "show / type a seed to replay"),
@@ -607,13 +633,29 @@ impl Control {
         dt * self.mult
     }
 
-    /// `x1.000`-style label for the in-canvas HUD, or `PAUSED` when paused.
+    /// `x1.000`-style label for the in-canvas HUD, or `PAUSED` when paused, with a
+    /// `MUTED` suffix appended whenever `muted()` is true — the same in-canvas text
+    /// every game already draws for speed/pause is the natural place for mute state
+    /// too, no separate UI element needed.
     pub fn label(&self) -> String {
-        if self.paused {
+        let base = if self.paused {
             "PAUSED".to_owned()
         } else {
             format!("x{:.3}", self.mult)
+        };
+        if self.muted {
+            format!("{base}  MUTED")
+        } else {
+            base
         }
+    }
+
+    /// True after `M` has muted audio — see `handle_keys`. Every `audio::Clip` already
+    /// gates itself on this (via `audio::playback::muted()`), so games don't need to
+    /// check it before playing a sound; it's exposed mainly for a game's own HUD if it
+    /// wants a mute indicator beyond what `label()` already shows.
+    pub fn muted(&self) -> bool {
+        self.muted
     }
 
     /// Call when a game round ends. Bumps the episode counter and reports it, with the
