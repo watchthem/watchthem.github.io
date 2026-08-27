@@ -36,9 +36,20 @@ use std::f32::consts::PI;
 /// waveform's harsher harmonics afterward (see `melody_and_comp`'s lowpass) — an
 /// un-softened full-amplitude square/triangle lead reads as aggressive/buzzy rather
 /// than "chiptune-warm".
+///
+/// A note immediately followed by a rest gets a shorter release (`0.12` of its own
+/// length, matching `comp_chord`'s own tightened fraction, instead of the usual `0.35`)
+/// — `korobeiniki`'s two written rests (end of m4, end of m8) each follow a note whose
+/// normal 35%-of-length release starts fading a good third of the way before the note's
+/// own notated end. That's inaudible when something else is still sounding, but stacked
+/// directly onto a following rest it measurably widens the perceived gap well past the
+/// rest's own notated length (verified: the note was down to background level ~125ms
+/// before its own end, on top of the ~360ms rest itself). Shortening just this one
+/// note's release keeps it full closer to its true end, tightening that gap, without
+/// touching the rest's own length, the comp, or the bass at all.
 fn render_arpeggio(notes: &[(Option<f32>, f32)], wave: SfxWave) -> Vec<f32> {
     let mut out = Vec::new();
-    for &(pitch, secs) in notes {
+    for (i, &(pitch, secs)) in notes.iter().enumerate() {
         let Some(st) = pitch else {
             out.extend(std::iter::repeat_n(
                 0.0,
@@ -46,8 +57,9 @@ fn render_arpeggio(notes: &[(Option<f32>, f32)], wave: SfxWave) -> Vec<f32> {
             ));
             continue;
         };
+        let before_rest = matches!(notes.get(i + 1), Some((None, _)));
         let attack = (secs * 0.08).min(0.02);
-        let release = secs * 0.35;
+        let release = secs * if before_rest { 0.12 } else { 0.35 };
         let params = SfxParams {
             wave,
             envelope: Envelope {

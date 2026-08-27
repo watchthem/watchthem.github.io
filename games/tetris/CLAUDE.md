@@ -112,6 +112,19 @@ fractions must sum to `1.0 * MEASURE_SECS` exactly or it drifts out of sync with
 melody — regression-tested (`comp_track_len_matches_melody_len_per_measure`). Square-wave
 lead gets a light low-pass + reduced sustain so it doesn't read as harsh/clippy.
 
+`render_arpeggio` shortens release to `0.12` of a note's own length (from the usual
+`0.35`) specifically for a note immediately followed by a rest — `korobeiniki`'s two
+written rests (end of m4, end of m8) each follow a note whose normal release starts
+fading a third of the way before its own notated end, which is inaudible with something
+else still sounding over it but, stacked directly onto the following rest, measurably
+widened the perceived phrase-boundary gap well past the rest's own ~360ms (RMS-checked:
+the note was down to background level ~125ms before its own end). Fixing this at the
+melody-note level, not by propping the gap up with a louder/longer bass or comp, was
+deliberate — an earlier attempt to keep the bass note loud through the same gap measurably
+raised its RMS floor but sounded very bad (a long, static, loud sawtooth drone) and was
+reverted; shortening the *preceding* note's own release is a few-line change scoped to
+exactly the two notes that need it, touching nothing else.
+
 `korobeiniki_track`'s final `normalize_peak` target is `0.65`, not the more obvious
 `0.85`-ish — real headroom, not style. Every note's ADSR ramps to full `1.0` gain at
 the *end of attack* regardless of `sustain_level` (sustain only caps the plateau after
