@@ -158,6 +158,13 @@ top-to-bottom emptying rows; repeats with a fresh pattern. `ROWS_PER_SEC = 3.0` 
 one full cycle (~13.3s) *longer* than the intro (~8.3s) on purpose — a visitor sees one
 continuous flood into a partial drain, never the reset back to a fresh pattern.
 
+`DemoRow::Solid` draws each flooded row as one flat `draw_rectangle` spanning the full
+row width, no vertical inset (so consecutive flooded rows butt directly together with no
+seam) — tried `draw_cell` per column first (matching the board's per-cell grid look) but
+a full 10-wide row of one repeated color read as a row of separated squares rather than
+the single connected mass a flood should look like; `draw_cell`'s inset is only barely
+visible across a real, compact 1-4 cell piece.
+
 ## Gotchas
 
 - `gen` is a reserved keyword since the 2024 edition (future generator-block syntax) —

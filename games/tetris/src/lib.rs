@@ -896,11 +896,17 @@ fn draw_demo_board(demo: &DemoBoard) {
                 }
             }
             DemoRow::Solid => {
+                // A flat fill, not `draw_cell` per column: `draw_cell`'s inset is
+                // barely visible across a compact 1-4 cell piece, but tiling it 10-wide
+                // for one uniform color reads as a row of separated squares rather than
+                // the single connected mass a flood should look like. No vertical inset
+                // either, so consecutive flooded rows butt directly together with no
+                // seam between them.
                 draw_rectangle(
                     BOARD_X + 1.0,
-                    BOARD_Y + r as f32 * CELL + 1.0,
+                    BOARD_Y + r as f32 * CELL,
                     BOARD_W - 2.0,
-                    CELL - 2.0,
+                    CELL,
                     demo.row_colors[r],
                 );
             }
