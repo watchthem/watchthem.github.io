@@ -38,10 +38,11 @@ jobs:
 
       # xvfb + a software GL driver give macroquad/miniquad a real GLX context with no
       # physical display, so games can be run natively to capture screenshots in CI.
+      # libasound2-dev: native link dep pulled in via lib/audio -> quad-snd -> quad-alsa-sys.
       - name: Install headless screenshot dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgl1 libglx-mesa0 libgl1-mesa-dri
+          sudo apt-get install -y xvfb libgl1 libglx-mesa0 libgl1-mesa-dri libasound2-dev
 
       # resvg rasterizes the homepage hero SVG to a PNG for social-preview meta tags.
       - name: Install resvg
