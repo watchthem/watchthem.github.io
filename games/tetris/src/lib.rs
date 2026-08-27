@@ -343,11 +343,14 @@ enum DemoRow {
 
 impl DemoBoard {
     /// Full sweep (20 rows) takes 20 / 3 ≈ 6.7s, one full flood+drain cycle ≈ 13.3s —
-    /// deliberately *longer* than `sound::INTRO_SECS` (~8.3s) so the cycle never
-    /// resets to a fresh pattern mid-intro: a visitor sees one continuous flood (and
-    /// the start of the drain), never a visible loop-back. An earlier draft (6
-    /// rows/sec, ~6.7s/cycle) was tuned the opposite way — to guarantee at least one
-    /// full loop played out — which read as a repeat/reset instead of one smooth rise.
+    /// deliberately *longer* than `sound::INTRO_SECS` (~11.5s, since the intro's tempo
+    /// slowed down — was ~8.3s) so the cycle never resets to a fresh pattern mid-intro:
+    /// a visitor sees one continuous flood (and the start of the drain), never a
+    /// visible loop-back. An earlier draft (6 rows/sec, ~6.7s/cycle) was tuned the
+    /// opposite way — to guarantee at least one full loop played out — which read as a
+    /// repeat/reset instead of one smooth rise. Margin over the intro is down to ~1.8s
+    /// now; if the intro's tempo drops further this stops holding and `ROWS_PER_SEC`
+    /// needs lowering too.
     const ROWS_PER_SEC: f32 = 3.0;
     /// Chance any given cell is filled, before the guaranteed-empty-column exclusion
     /// below — tuned to look like a dense but clearly gappy board, not a solid wall.

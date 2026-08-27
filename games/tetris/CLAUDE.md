@@ -98,12 +98,14 @@ firing a "rotate" cue for a rotation that never happened.
 
 `intro` = "Korobeiniki" (Коробе́йники, ~1861 Russian folk tune, public domain — the real
 Tetris theme), transcribed fresh in `korobeiniki()`, 8 measures each exactly
-`MEASURE_SECS`. `CHORD_GUIDE_TONES` jazz-harmonizes one chord per measure as just the
-3rd+7th (guide tones — the two notes that define a chord's color; a full triad reads as
-muddy under one melody line). Comp envelope fractions must sum to `1.0 * MEASURE_SECS`
-exactly or it drifts out of sync with the melody — regression-tested
-(`comp_track_len_matches_melody_len_per_measure`). Square-wave lead gets a light
-low-pass + reduced sustain so it doesn't read as harsh/clippy.
+`MEASURE_SECS`. The melody is **A natural minor** (F♮/G♮ in m5, never F#/G#, closes on a
+held A4) — `CHORD_GUIDE_TONES` harmonizes it Am11-Am7-Em7-Am7-Dm7-C6-E7-Am7 (i-i-v-i-iv-
+♭III-V-i), one chord per measure as just the 3rd+7th (guide tones — the two notes that
+define a chord's color; a full triad reads as muddy under one melody line). Comp
+envelope fractions must sum to `1.0 * MEASURE_SECS` exactly or it drifts out of sync
+with the melody — regression-tested (`comp_track_len_matches_melody_len_per_measure`).
+Square-wave lead gets a light low-pass + reduced sustain so it doesn't read as
+harsh/clippy.
 
 `korobeiniki_track`'s final `normalize_peak` target is `0.65`, not the more obvious
 `0.85`-ish — real headroom, not style. Every note's ADSR ramps to full `1.0` gain at
@@ -115,14 +117,60 @@ waves (steep edges, strong high harmonics) are exactly the content most prone to
 Too little margin here reads as distortion at the loudest moments, not literal clipping
 you'd see in the sample data.
 
-**Fixing a bad chord**: check every guide tone against every melody note in that
-measure as a semitone class (0-11) — a clash is exactly `1` or `11` apart. Only OK if
-the *next* chord resolves it; a clash that just sits there for a full measure is a bug.
-Watch for the subtler version too: a chord can be clash-free yet still not resolve
-where the *melody itself* actually lands (e.g. the closing note) — check what the tune
-is really centered on, not just adjacent notes. Prefer octave-shifting a guide tone (12
-semitones) for smoother voice-leading over adding a 3rd note. Iterate by listening
-(`mise run run tetris`) — code-reading alone won't tell you if a harmony works.
+`bass_track` adds a funky "3+1" figure under the comp: `BASS_ROOTS` (one root per
+measure, derived from `CHORD_GUIDE_TONES`'s 3rd minus a minor/major 3rd, dropped another
+octave) plays through `funky_bass_measure` — three short staccato hits (`da-da-da`) then
+one longer held note filling the rest of the measure (`DAAA`), each hit/rest sized in
+exact `EIGHTH` multiples so the figure sums to `MEASURE_SECS` like everything else here.
+The 1st and 4th (held) hits are the root; the 2nd and 3rd are two different color
+notes, not more root repeats — a perfect 5th (root + 7, correct for every chord quality
+here) then the chord's own 7th/6th (`BASS_COLOR_TONE`: +10 for the `m7` chords, +9 for
+the one `C6` measure, since a b7 there would clash with its actual 6th). `bass_hit` is a
+sawtooth low-passed at 900Hz (`bass_track`, once over the whole line) rather than a bare
+`Triangle` — a triangle at this register is close to a pure fundamental and read as
+thin/flute-y rather than bassy; the filtered saw keeps real harmonic body.
+`drum_track` layers a light jazz-funk kit on top: a soft closed-hihat pulse on every
+eighth plus a soft kick on beat 1 and snare on beats 2/4 (`drum_measure`), each voice
+scaled well under its own natural loudness before mixing — a full-volume kit read as a
+different, busier song competing with the melody, not a light pulse under it. Hits land
+at arbitrary offsets mid-track, so they're mixed with `place_at` (adds a clip into a
+buffer at a given sample offset, growing it with silence as needed) rather than
+`mix::sum` (which only aligns buffers starting at index 0). `hat`/`kick`/`snare` are
+each rendered exactly once (`drum_track`) and placed repeatedly, not resynthesized per
+hit — `chiptune::hihat`/`snare`'s noise components use a fixed internal seed regardless,
+so every hit was already bit-identical audio, just wastefully recomputed 64/16 times.
+
+Only the melody gets `melody_only`'s low-pass — filtering the whole mix would dull the
+drum kit's noise-based hihat/snare, which needs its own high-frequency content to read
+as percussion rather than a thump.
+
+**Mix balance**: every bass/melody note's envelope peaks at `1.0` (`Envelope::gain_at`
+ramps to full gain at the end of attack regardless of `sustain_level`), but `comp_chord`
+— the only layer actually carrying the harmony — is normalized to `0.8`. Left alone, the
+louder layers' transients set the peak `korobeiniki_track`'s final `normalize_peak`
+scales *everything* against, burying the comp under thumping roots ("harmony sounds like
+a mess" can be a balance bug, not a wrong-note bug). `bass_track` attenuates its own
+output by `0.55` after the lowpass, before that shared scaling, to buy the comp real
+headroom.
+
+**Fixing a bad chord — two different bug classes, check both**: (1) *literal clash*:
+check every guide tone against every melody note in that measure as a semitone class
+(0-11) — a clash is exactly `1` or `11` apart, OK only if the *next* chord resolves it.
+(2) *functional/key-center*: a chord can be clash-free against its own measure and still
+be the *wrong chord* for the piece's actual key — this doesn't show up in a per-measure
+pairwise check at all. Work out what key the melody is actually in (which notes never
+appear — e.g. this melody never uses F#/G#, ruling out any chord that implies them) and
+verify the whole progression makes sense in that one key, not just bar-by-bar. The
+E-minor-vs-A-minor bug here (`Bm7` isn't diatonic to A minor and needs an F# the melody
+contradicts four bars later; `Em7` "i" chords were actually the v) passed every pairwise
+clash check and still sounded like "a mess" — only a full 8-measure functional analysis
+found it. Watch for the clash check's subtler failure mode too: a chord can be
+clash-free yet still not resolve where the melody itself actually *lands* (e.g. the
+closing note) — check what the tune is really centered on, not just adjacent notes.
+Prefer octave-shifting a guide tone (12 semitones) for smoother voice-leading over
+adding a 3rd note. Iterate by listening (`mise run run tetris`) — code-reading alone
+won't tell you if a harmony works, and for the functional check, if you're not confident
+re-deriving the key/progression by ear, get a second pass from a stronger model.
 
 **Gotcha**: macroquad's `audio` feature is off by default. Missing it silently no-ops
 every `play_sound` call (stderr warning, no crash) instead of failing loudly — grep for
@@ -135,10 +183,20 @@ long tasks (230/82/116ms) in the first ~650ms of a real page load — not a glit
 rendered samples themselves (a `scan_for_clicks`-style sample-diff scan found zero
 discontinuities). Fixed by loading each clip (`Clip::from_samples`, already a yield
 point) right after synthesizing it instead of synthesizing all 9 first, plus an extra
-`next_frame().await` after the two heaviest chunks (`intro`, the 4-explosion `clear`
-batch) — cut it to 1 long task of 119ms. `next_frame()` needs `Sfx::load` to only run
-inside the real windowed loop (`amain`), never `run_headless` — it has no event loop to
-yield into there.
+`next_frame().await` after the heaviest chunks — cut it to 1 long task of 119ms.
+`next_frame()` needs `Sfx::load` to only run inside the real windowed loop (`amain`),
+never `run_headless` — it has no event loop to yield into there.
+
+Adding `bass_track`/`drum_track` regressed this: one combined
+melody+comp+bass+drums synthesis step was heavy enough on its own to bring it back to 3
+tasks up to 202ms. `Sfx::load` synthesizes `intro`'s 4 layers (melody, comp, bass,
+drums) as 4 separate steps, each with its own `next_frame().await`, rather than calling
+`korobeiniki_track` (which still exists, `#[cfg(test)]`-only, as the single-call
+reference the diagnostic tests use) — down to 2 tasks around 170ms/76ms. Splitting
+melody from comp specifically didn't move the needle much further (some of the cost here
+is fixed per-call interpreter/JIT overhead on wasm, not purely proportional to the
+native synthesis time) — good enough given real new audio content had to go somewhere,
+not chased further.
 
 ## Opening screen
 

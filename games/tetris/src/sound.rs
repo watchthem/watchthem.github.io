@@ -33,7 +33,7 @@ use std::f32::consts::PI;
 /// Envelope release ends every note at exactly zero gain (see `Envelope::gain_at`), so
 /// plain concatenation has no audible click between notes. `sustain_level` is kept
 /// moderate (not full-scale) and the caller is expected to round off the raw
-/// waveform's harsher harmonics afterward (see `korobeiniki_track`'s lowpass) — an
+/// waveform's harsher harmonics afterward (see `melody_and_comp`'s lowpass) — an
 /// un-softened full-amplitude square/triangle lead reads as aggressive/buzzy rather
 /// than "chiptune-warm".
 fn render_arpeggio(notes: &[(Option<f32>, f32)], wave: SfxWave) -> Vec<f32> {
@@ -85,7 +85,11 @@ const A5: f32 = 12.0;
 /// Tempo for `korobeiniki`/`CHORD_GUIDE_TONES` — an eighth note, in seconds. Every
 /// measure of both the melody and the chord progression below sums to exactly 8 of
 /// these (`MEASURE_SECS`), which is what lets the two be mixed with no manual alignment.
-const EIGHTH: f32 = 0.13;
+/// `0.18` (a quarter note = 2 eighths = 0.36s, ~167 BPM) rather than the original
+/// `0.13` (~231 BPM) — the original tempo was closer to a sprint than a jazz combo's
+/// pocket; slower gives the bass/drum groove room to actually swing instead of just
+/// keeping up.
+const EIGHTH: f32 = 0.18;
 const MEASURE_SECS: f32 = 8.0 * EIGHTH;
 const NUM_MEASURES: f32 = 8.0;
 
@@ -155,62 +159,85 @@ fn korobeiniki() -> Vec<(Option<f32>, f32)> {
 }
 
 /// One (3rd, 7th) guide-tone pair per measure of `korobeiniki`, in semitones from A4, a
-/// jazz reharmonization of the tune: **i - iv - v - i - iv(borrowed) -
-/// I6(relative-major substitution) - v - i** (Em7 - Am7 - Bm7 - Em7 - Dm7 - C6 - Bm7 -
-/// Am7), one octave below the melody. Guide tones only (not full triads) — the 3rd and
-/// 7th are the two notes that actually define a chord's quality/color, the standard
-/// jazz-comping shorthand; a full stacked chord here would just read as muddy under a
-/// single-line melody.
+/// jazz reharmonization of the tune: **i - i - v - i - iv - ♭III - V - i** (Am11 - Am7 -
+/// Em7 - Am7 - Dm7 - C6 - E7 - Am7), one octave below the melody. Guide tones only (not
+/// full triads) — the 3rd and 7th are the two notes that actually define a chord's
+/// quality/color, the standard jazz-comping shorthand; a full stacked chord here would
+/// just read as muddy under a single-line melody.
+///
+/// **The melody is A natural minor, full stop** — it uses F♮/G♮ (m5) and never F#/G#,
+/// and closes the whole phrase on a held A4 preceded by C5, an A-minor tonic outline.
+/// An earlier draft analyzed this as E minor instead (Em7-Am7-Bm7-Em7-... for
+/// m1-m2-m3-m4-...), which is wrong on two of its four distinct chords: `Bm7` (m3/m7)
+/// isn't diatonic to A minor at all — it needs an F# that directly contradicts the
+/// melody's own F♮ four bars later — and `Em7` as the "i" in m1/m4 is really the v,
+/// leaving the piece with no true tonic until an ad-hoc fix singled out m8 alone (see
+/// the git history for that fix's reasoning, now generalized here). None of this showed
+/// up in a plain per-measure clash check, because every one of these guide-tone pairs
+/// *is* individually consonant against its own measure's melody — the bug was
+/// functional (wrong chord for the key), not a literal clashing note, which is why a
+/// second full harmonic analysis (checking the whole 8-measure key center, not just
+/// pairwise semitone distances per bar) was needed to find it.
 ///
 /// Every pair here is verified clash-free against its measure's actual melody notes
 /// (pairwise semitone distance, not by ear) — see `games/tetris/CLAUDE.md`'s "Fixing
-/// bad voicings" section for the method. First draft used `B7♭9` (guide tones D#, A) for
-/// m3/m7 — the textbook altered dominant — but both measures' melody is a plain
-/// diatonic run (B-C-D-E, no raised leading tone implied), so D# sat a semitone from the
-/// melody's D and E with no resolution (comp holds one chord for the whole measure, so a
-/// clash mid-measure never resolves until the *next* chord). `Cmaj7` (guide tones E, B)
-/// for m6 had the same problem: B a semitone from the melody's repeated C. Swapped both
-/// for the plain (non-altered) `v` and a `6`-voicing respectively — less flashy, but
-/// actually consonant with what the melody is doing.
-///
-/// **m8 is `Am7`, not `Em7`** despite closing out the same "i" slot m1/m4 use — the
-/// melody's actual tonal center is A (it closes the whole phrase on a held A4, preceded
-/// by C5, i.e. an A-minor tonic outline), not E. `Em7`'s guide tones (G, D) are diatonic
-/// so they don't *clash* with that closing A4 — the numeric check alone missed this —
-/// but they also share no tone with an A-minor tonic triad, so the final cadence never
-/// actually resolves; it reads as a dangling dominant-ish color under the melody's
-/// landing note rather than "home". `Em7` mid-phrase (m1/m4) is fine — a return that
-/// isn't the final cadence doesn't need full resolution. `Am7` here reuses m2's exact
-/// guide tones (C, G): m2 is already the "iv" built on this same true tonic.
+/// bad voicings" section for the method — **and** against the actual A-minor key center.
+/// **m1** keeps its original `(G, D)` pair but is now read as `Am11` (the root moved to
+/// A in `BASS_ROOTS` below; G+D over A is the ♭7 and 11, a quartal jazz voicing) rather
+/// than `Em7` over an E root — one number moved (the bass), not the guide tones. **m3**
+/// is `Em7` (the true v) and **m4** is `Am7` (the true i, matching m8's identical
+/// closing melody C5-A4-A4) — m1/m3 and m3/m4 no longer share a chord, so a plain swap
+/// wasn't available; both changed. **m7** is `E7` (`G#4`, the raised leading tone that
+/// gives the final cadence real pull, `-1.0`/`-7.0`) rather than `Bm7` — the dominant
+/// this key actually has. First draft used `B7♭9` (guide tones D#, A) for that same
+/// slot — the textbook altered dominant — but the melody there is a plain diatonic run
+/// (B-C-D-E, no raised leading tone implied) so D# clashed with the melody's D and E;
+/// `E7`'s own guide tones don't have that problem. `Cmaj7` (guide tones E, B) was tried
+/// for m6 for the same textbook reason and had the same clash (B a semitone from the
+/// melody's repeated C); swapped for the plain `6`-voicing instead — less flashy, but
+/// actually consonant.
 const CHORD_GUIDE_TONES: [(f32, f32); 8] = [
-    (-2.0, -7.0),  // m1 Em7: 3rd=G, 7th=D
+    (-2.0, -7.0),  // m1 Am11 (over A root): 11th=G, b7=D
     (-9.0, -2.0),  // m2 Am7: 3rd=C, 7th=G
-    (-7.0, -12.0), // m3 Bm7: 3rd=D, 7th=A
-    (-2.0, -7.0),  // m4 Em7: 3rd=G, 7th=D
+    (-2.0, -7.0),  // m3 Em7: 3rd=G, 7th=D
+    (-9.0, -2.0),  // m4 Am7: 3rd=C, 7th=G
     (-4.0, -9.0),  // m5 Dm7: 3rd=F, 7th=C
     (-5.0, -12.0), // m6 C6:  3rd=E, 6th=A
-    (-7.0, -12.0), // m7 Bm7: 3rd=D, 7th=A
+    (-1.0, -7.0),  // m7 E7:  3rd=G#, 7th=D
     (-9.0, -2.0),  // m8 Am7: 3rd=C, 7th=G
 ];
 
 /// One measure's worth of soft comping: the 3rd and 7th (or 3rd and 6th, for `C6`)
 /// sustained together, sine (not square/triangle — the lead already claims the bright
-/// register, comping sits under it, not in competition with it), with a slow "swell"
-/// attack for a jazzy comp feel rather than a percussive stab. Envelope fractions sum
-/// to exactly `1.0` so this renders to precisely `MEASURE_SECS` — matching the melody's
+/// register, comping sits under it, not in competition with it), with a "swell" attack
+/// for a jazzy comp feel rather than a percussive stab. Envelope fractions sum to
+/// exactly `1.0` so this renders to precisely `MEASURE_SECS` — matching the melody's
 /// own per-measure duration is what keeps the two in sync; an earlier draft hardcoded
 /// `attack: 0.12` (not `MEASURE_SECS`-proportional), rendering ~0.04s short of a
 /// measure and drifting the comp further behind the melody every measure.
+///
+/// `attack`/`release` were originally `0.15`/`0.2` (a slower swell) but that meant the
+/// outgoing chord's release and the incoming chord's attack overlapped for the first
+/// ~1.6 eighths of *every* measure — e.g. m5's F4 release tail was still audible under
+/// m6's E4 attack, a real (minor-2nd, ~20Hz-apart) beating dissonance at the bar line,
+/// not a wrong-note bug. Tightened so the chord is fully present under the downbeat
+/// instead of still swelling in after it; `0.72` absorbs what `attack`/`release` gave up
+/// so the fractions still sum to `1.0`.
+///
+/// Normalized to `0.8`, not `0.5` — at `0.5` the comp (the only layer actually carrying
+/// the harmony) ended up roughly 6dB under the melody/bass, which both peak at `1.0`
+/// before the final mix's own `normalize_peak` scales everything down together (see
+/// `korobeiniki_track`): the result was thumping roots and a barely-audible chord.
 fn comp_chord(third: f32, seventh: f32) -> Vec<f32> {
     let voice = |semi: f32| {
         SfxParams {
             wave: SfxWave::Sine,
             envelope: Envelope {
-                attack: MEASURE_SECS * 0.15,
+                attack: MEASURE_SECS * 0.06,
                 decay: MEASURE_SECS * 0.1,
                 sustain_level: 0.45,
-                sustain: MEASURE_SECS * 0.55,
-                release: MEASURE_SECS * 0.2,
+                sustain: MEASURE_SECS * 0.72,
+                release: MEASURE_SECS * 0.12,
             },
             start_freq: note_freq(semi),
             freq_slide: 0.0,
@@ -223,7 +250,7 @@ fn comp_chord(third: f32, seventh: f32) -> Vec<f32> {
         .render(SAMPLE_RATE, 1)
     };
     let mut out = mix::sum(&[&voice(third), &voice(seventh)]);
-    mix::normalize_peak(&mut out, 0.5);
+    mix::normalize_peak(&mut out, 0.8);
     out
 }
 
@@ -235,10 +262,200 @@ fn comp_track() -> Vec<f32> {
     out
 }
 
-/// The full intro: melody + comping mixed, then gently low-passed to round off the
-/// square-wave lead's harsher upper harmonics — an un-filtered square reads as
-/// aggressive/clippy even well under digital clipping (the WAV encoder clamps to
-/// `[-1.0, 1.0]` regardless, so this isn't about literal clipping, it's timbre).
+/// Root note per measure, one octave below `CHORD_GUIDE_TONES`'s own octave so the bass
+/// sits under the comp rather than doubling it: Am-Am-Em-Am-Dm-C-E-Am (matching
+/// `CHORD_GUIDE_TONES`'s A-minor progression — see its doc comment). Not simply "3rd
+/// minus a 3rd" from the guide tones any more: m1's guide tones are voiced as the 11th
+/// and ♭7 over an A root (an `Am11` reading), not a 3rd/7th pair a root could be
+/// mechanically derived from, and m7's root (E) is the *5th* below its guide tones'
+/// implied E-something, not a 3rd below — both come from the key-center analysis, not
+/// arithmetic on the pair stored above.
+const BASS_ROOTS: [f32; 8] = [
+    -24.0, // m1 A
+    -24.0, // m2 A
+    -17.0, // m3 E
+    -24.0, // m4 A
+    -19.0, // m5 D
+    -21.0, // m6 C
+    -17.0, // m7 E
+    -24.0, // m8 A
+];
+
+/// Semitones above `BASS_ROOTS`' root for the funk figure's 3rd staccato hit — the
+/// chord's own color tone, an octave-independent interval so it stays close to the
+/// root rather than jumping registers: a ♭7 (root + 10) for every `m7`/dominant-7
+/// chord here (`E7`'s ♭7 is the same interval size as a minor 7th's, only the 3rd
+/// differs between the two qualities, and this table never touches the 3rd), but a
+/// major 6th (root + 9) for the one `C6` measure (m6) — `C6` has no 7th, and root + 10
+/// there would land on a b7 clashing with the chord's actual 6th (A).
+const BASS_COLOR_TONE: [f32; 8] = [10.0, 10.0, 10.0, 10.0, 10.0, 9.0, 10.0, 10.0];
+
+/// One punchy bass note. `secs` fully determines the envelope's total length (attack +
+/// decay + release always sums to it, `sustain` left at `0.0`), so a note never bleeds
+/// into whatever comes right after it in the track — a plain zero-length gap or the
+/// next note both stay click-free.
+///
+/// Sawtooth, not `Triangle` (the first draft): a triangle wave is nearly a pure
+/// fundamental with very weak upper harmonics — exactly what reads as thin/breathy
+/// ("flute-y") rather than "bassy" at this register, especially on the held long note,
+/// which is essentially a sustained pure tone. A sawtooth's full harmonic series gives
+/// it body; `funky_bass_measure` low-passes the whole rendered line afterward to tame
+/// the raw saw's harshness back down without losing that harmonic weight.
+fn bass_hit(semi: f32, secs: f32, sustain_level: f32) -> Vec<f32> {
+    let attack = (secs * 0.08).min(0.006);
+    let decay = secs * 0.35;
+    let release = (secs - attack - decay).max(0.0);
+    SfxParams {
+        wave: SfxWave::Sawtooth,
+        envelope: Envelope {
+            attack,
+            decay,
+            sustain_level,
+            sustain: 0.0,
+            release,
+        },
+        start_freq: note_freq(semi),
+        freq_slide: 0.0,
+        freq_delta_slide: 0.0,
+        arp_semitones: 0.0,
+        arp_time_frac: 0.5,
+        vibrato_depth: 0.0,
+        vibrato_speed: 0.0,
+    }
+    .render(SAMPLE_RATE, 1)
+}
+
+/// A "3+1" funk bass figure: three short staccato hits (each hit + the rest after it
+/// exactly one `EIGHTH`), then one longer note held through the rest of the measure
+/// (the remaining 5 eighths) — `da-da-da-DAAA` rather than a walking line. The 1st and
+/// 4th (held) notes are both the root; the 2nd and 3rd are two different color notes —
+/// a perfect 5th (root + 7, diatonically correct for every chord quality used here)
+/// then the chord's own 7th/6th (`BASS_COLOR_TONE`) — not three repeats of the root,
+/// which read as static rather than a real bassline. Sums to exactly `MEASURE_SECS`,
+/// same discipline as `comp_chord`.
+fn funky_bass_measure(root: f32, color: f32) -> Vec<f32> {
+    let hit_on = EIGHTH * 0.65;
+    let hit_rest = EIGHTH - hit_on;
+    let rest_samples = (hit_rest * SAMPLE_RATE as f32).round() as usize;
+    let mut out = Vec::new();
+    for &pitch in &[root, root + 7.0, root + color] {
+        out.extend(bass_hit(pitch, hit_on, 0.0));
+        out.extend(std::iter::repeat_n(0.0, rest_samples));
+    }
+    let held = MEASURE_SECS - 3.0 * EIGHTH;
+    out.extend(bass_hit(root, held, 0.5));
+    out
+}
+
+fn bass_track() -> Vec<f32> {
+    let mut out = Vec::new();
+    for (&root, &color) in BASS_ROOTS.iter().zip(BASS_COLOR_TONE.iter()) {
+        out.extend(funky_bass_measure(root, color));
+    }
+    // Tames the raw sawtooth's harsh upper harmonics (see `bass_hit`) back down to a
+    // rounder "synth bass" tone — filtered here, once, over the whole line rather than
+    // per hit, so the filter's own state carries smoothly through the rests instead of
+    // resetting at every note boundary.
+    one_pole_lowpass(&mut out, 900.0, SAMPLE_RATE);
+    // Every bass hit's own envelope peaks at 1.0 (see `bass_hit`'s attack), same as the
+    // melody, while `comp_chord` — the only layer actually carrying the harmony — peaks
+    // at 0.8. Left alone, the bass's own transients are what set the peak
+    // `korobeiniki_track`'s final `normalize_peak` scales *everything* against, burying
+    // the comp under thumping roots. Attenuating the bass here, before that shared
+    // scaling, buys the comp real headroom for the least audible loss (a bassline reads
+    // fine well under full scale; a chord that's inaudible doesn't read at all).
+    for s in out.iter_mut() {
+        *s *= 0.55;
+    }
+    out
+}
+
+/// Adds `clip` into `track` starting at sample `at`, growing `track` with silence
+/// first if needed. Additive placement, not `mix::sum` (which only aligns buffers
+/// starting at index 0) — a percussion hit lands mid-track, and needs its own tail
+/// free to ring past its grid slot without being truncated or clicking.
+fn place_at(track: &mut Vec<f32>, at: usize, clip: &[f32]) {
+    let end = at + clip.len();
+    if track.len() < end {
+        track.resize(end, 0.0);
+    }
+    for (i, &s) in clip.iter().enumerate() {
+        track[at + i] += s;
+    }
+}
+
+/// Light jazz-funk kit for one measure: a steady closed-hihat pulse on every eighth (a
+/// soft "ride" feel), a soft kick on beat 1, and a soft snare backbeat on beats 2 and 4
+/// (eighth positions 2 and 6). `hat`/`kick`/`snare` are each rendered once by the caller
+/// (`drum_track`) and placed repeatedly here rather than re-synthesized per hit —
+/// `chiptune::hihat`/`snare`'s noise components use a fixed internal seed regardless
+/// (so every hit was already bit-identical audio, just wastefully recomputed 64/16
+/// times over the full track for no difference in the result).
+fn drum_measure(
+    track: &mut Vec<f32>,
+    measure_start_secs: f32,
+    hat: &[f32],
+    kick: &[f32],
+    snare: &[f32],
+) {
+    let at = |eighth: f32| {
+        ((measure_start_secs + eighth * EIGHTH) * SAMPLE_RATE as f32).round() as usize
+    };
+    for e in 0..8 {
+        place_at(track, at(e as f32), hat);
+    }
+    place_at(track, at(0.0), kick);
+    for &beat in &[2.0, 6.0] {
+        place_at(track, at(beat), snare);
+    }
+}
+
+fn drum_track() -> Vec<f32> {
+    // Every voice scaled well under its own natural loudness before mixing in — a
+    // full-volume kit read as a different, busier song competing with the melody, not a
+    // light pulse sitting under it.
+    let mut hat = chiptune::hihat(false, SAMPLE_RATE);
+    for s in hat.iter_mut() {
+        *s *= 0.12;
+    }
+    let mut kick = chiptune::kick(SAMPLE_RATE);
+    for s in kick.iter_mut() {
+        *s *= 0.35;
+    }
+    let mut snare = chiptune::snare(SAMPLE_RATE);
+    for s in snare.iter_mut() {
+        *s *= 0.3;
+    }
+
+    let mut out = Vec::new();
+    for m in 0..NUM_MEASURES as usize {
+        drum_measure(&mut out, m as f32 * MEASURE_SECS, &hat, &kick, &snare);
+    }
+    out
+}
+
+/// The melody alone, low-passed (to round off the square-wave lead's harsher upper
+/// harmonics — an un-filtered square reads as aggressive/clippy even well under digital
+/// clipping, since the WAV encoder clamps to `[-1.0, 1.0]` regardless; this isn't about
+/// literal clipping, it's timbre). Kept split from `comp_track`/`bass_track`/
+/// `drum_track` (rather than one `melody_and_comp` doing melody+comp together) so
+/// `Sfx::load` can synthesize all four layers as four separate steps with a yield
+/// between each — see `Sfx::load`'s own comment on why the whole intro isn't built as
+/// one atomic block. Only the melody is filtered — filtering the whole mix instead
+/// would dull the drum kit's noise-based hihat/snare, which needs its own
+/// high-frequency content to read as percussion rather than a thump.
+fn melody_only() -> Vec<f32> {
+    let mut melody = render_arpeggio(&korobeiniki(), SfxWave::Square { duty: 0.35 });
+    one_pole_lowpass(&mut melody, 3200.0, SAMPLE_RATE);
+    melody
+}
+
+/// The full intro: melody, comping, a funky bass figure, and a light drum pulse, mixed
+/// together — see `melody_only`, `comp_track`, `bass_track`, `drum_track`. Test-only:
+/// `Sfx::load` needs this same mix but built as separate yielded steps (see its own
+/// comment), so it inlines this function's body rather than calling it; kept here as a
+/// convenience for the diagnostic tests below that want the real, fully-mixed intro
+/// audio.
 ///
 /// Normalized to a lower peak (`0.65`, not `0.85`) for real headroom, not just style:
 /// `render_arpeggio`'s envelope ramps to full `1.0` gain at the end of *every* note's
@@ -249,10 +466,11 @@ fn comp_track() -> Vec<f32> {
 /// reconstructs the waveform between samples — square waves, with their steep edges and
 /// strong high harmonics, are exactly the content most prone to that. `0.85` left too
 /// little margin and read as distortion at the loudest moments; `0.65` gives real room.
+/// `normalize_peak` only ever scales down, so adding more layers here stays safe
+/// regardless — it just raises the overall loudness the peak constraint allows for.
+#[cfg(test)]
 fn korobeiniki_track() -> Vec<f32> {
-    let melody = render_arpeggio(&korobeiniki(), SfxWave::Square { duty: 0.35 });
-    let mut track = mix::sum(&[&melody, &comp_track()]);
-    one_pole_lowpass(&mut track, 3200.0, SAMPLE_RATE);
+    let mut track = mix::sum(&[&melody_only(), &comp_track(), &bass_track(), &drum_track()]);
     mix::normalize_peak(&mut track, 0.65);
     track
 }
@@ -375,17 +593,33 @@ impl Sfx {
         // audio glitch ("sounds like a buffer underrun") even though the rendered
         // samples themselves are click-free. Fix: load each clip (`Clip::from_samples`,
         // already a yield point) right after synthesizing it instead of synthesizing
-        // all nine first, plus an explicit extra `next_frame().await` after the two
-        // heaviest chunks (`intro` alone: ~45ms native, more on wasm; the 4-explosion
-        // `clear` batch: ~8ms native) — `rotate`/`drop`/`lock`/`game_over` are each
-        // cheap enough that their own `Clip::from_samples().await` is yield enough on
-        // its own, so no extra `next_frame` after those specifically.
+        // all nine first, plus an explicit extra `next_frame().await` after the
+        // heaviest chunks — `rotate`/`drop`/`lock`/`game_over` are each cheap enough
+        // that their own `Clip::from_samples().await` is yield enough on its own, so no
+        // extra `next_frame` after those specifically.
 
         // The actual Tetris theme, jazz-comped (see `korobeiniki_track`) — fine as a
         // melodic, once-per-session intro even though the rest of this palette avoids
         // tonal/melodic sounds, since it isn't heard on every move the way
-        // rotate/drop/lock/clear are.
-        let intro = Clip::from_samples(&korobeiniki_track()).await;
+        // rotate/drop/lock/clear are. Built as 4 separate synthesis steps (melody, comp,
+        // bass, drums), not one call to `korobeiniki_track`, each followed by its own
+        // yield — adding the bass/drum layers made even a single combined
+        // melody+comp+bass+drums call heavy enough to reintroduce the long-task problem
+        // above (measured: 1 task of 119ms right after the original fix -> 3 tasks up
+        // to 202ms once bass/drums were added as one extra synthesis+yield step -> 2
+        // tasks up to 159ms splitting melody+comp from bass+drums); splitting all four
+        // layers individually is what actually keeps each chunk small.
+        let melody = melody_only();
+        next_frame().await;
+        let comp = comp_track();
+        next_frame().await;
+        let bass = bass_track();
+        next_frame().await;
+        let drums = drum_track();
+        next_frame().await;
+        let mut intro_samples = mix::sum(&[&melody, &comp, &bass, &drums]);
+        mix::normalize_peak(&mut intro_samples, 0.65);
+        let intro = Clip::from_samples(&intro_samples).await;
         next_frame().await;
 
         // A soft low click, not a beep — this fires on every piece, so it has to stay
@@ -513,14 +747,15 @@ mod tests {
     /// render to exactly `MEASURE_SECS` per measure, same as the melody's own notes
     /// (which sum to `MEASURE_SECS` by construction — see `korobeiniki`'s `// mN`
     /// groupings). A hardcoded (non-`MEASURE_SECS`-proportional) envelope field
-    /// silently drifts the two apart, worse each measure — allow at most 2 samples of
-    /// rounding slop per measure, not the ~1,500-sample (~0.036s) gap the original bug
+    /// silently drifts the two apart, worse each measure — allow at most 4 samples of
+    /// rounding slop per measure (scales with `EIGHTH`/`MEASURE_SECS`'s own size, hence
+    /// not a tighter fixed value), not the ~1,500-sample (~0.036s) gap the original bug
     /// produced.
     #[test]
     fn comp_track_len_matches_melody_len_per_measure() {
         let melody = render_arpeggio(&korobeiniki(), SfxWave::Square { duty: 0.35 });
         let comp = comp_track();
-        let tolerance = 2 * CHORD_GUIDE_TONES.len();
+        let tolerance = 4 * CHORD_GUIDE_TONES.len();
         assert!(
             melody.len().abs_diff(comp.len()) <= tolerance,
             "melody {} samples vs comp {} samples (diff {}, tolerance {tolerance})",
@@ -528,6 +763,35 @@ mod tests {
             comp.len(),
             melody.len().abs_diff(comp.len()),
         );
+    }
+
+    /// Same discipline as `comp_track_len_matches_melody_len_per_measure`, for the two
+    /// newer layers: `bass_track`'s per-measure staccato-hits-plus-rest arithmetic and
+    /// `drum_track`'s per-hit sample-offset rounding can each drift by a few samples
+    /// per measure without either being a real bug — `funky_bass_measure` alone rounds
+    /// 4 separate times per measure (3 hit+rest pairs, 1 held note), vs. `comp_chord`'s
+    /// single render call, hence the wider tolerance here. This catches a *real* desync
+    /// (a dropped/duplicated measure, a wrong constant) rather than that rounding noise.
+    #[test]
+    fn bass_and_drum_tracks_len_matches_melody_len_per_measure() {
+        let melody = render_arpeggio(&korobeiniki(), SfxWave::Square { duty: 0.35 });
+        let tolerance = 4 * BASS_ROOTS.len();
+        let bass = bass_track();
+        assert!(
+            melody.len().abs_diff(bass.len()) <= tolerance,
+            "melody {} samples vs bass {} samples (diff {}, tolerance {tolerance})",
+            melody.len(),
+            bass.len(),
+            melody.len().abs_diff(bass.len()),
+        );
+        // `drum_track` isn't checked against `melody.len()` the same way: it's only as
+        // long as its very last hit's own short release tail reaches (the final
+        // eighth's hihat, here — its ~0.03s release doesn't reach all the way to the
+        // measure's true end), which is expected, not a desync — nothing plays there
+        // regardless. Sanity-check it's in the right ballpark instead of empty/runaway.
+        let drums = drum_track();
+        assert!(!drums.is_empty());
+        assert!(drums.len() < melody.len() + SAMPLE_RATE as usize);
     }
 
     /// No guide tone should sit a semitone (or its octave-equivalent, 11 semitones) away
