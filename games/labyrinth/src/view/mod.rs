@@ -3,6 +3,7 @@
 
 pub mod minimap;
 pub mod raycast;
+pub mod theme;
 
 use macroquad::prelude::*;
 

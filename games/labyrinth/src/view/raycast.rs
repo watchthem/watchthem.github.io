@@ -1,8 +1,9 @@
 //! Pseudo-3D first-person view: a DDA ray per screen column against the maze's dense
-//! `WallGrid`, drawn as vertical strips. Floor and ceiling are two flat gradient rects,
-//! not per-pixel cast. Flat per-face colors here; procedural textures are phase 4.
+//! `WallGrid`, drawn as textured vertical strips sampled from the active `Theme`.
+//! Floor and ceiling are two flat gradient rects (theme palette), not per-pixel cast.
 
 use crate::maze::WallGrid;
+use crate::view::theme::Theme;
 use macroquad::prelude::*;
 
 /// One ray per two horizontal pixels — ~450 columns at 900px.
@@ -10,61 +11,88 @@ const COL_STEP: f32 = 2.0;
 /// Camera plane half-width -> horizontal FOV (~60deg at 0.66).
 const FOV: f32 = 0.66;
 
-const CEIL_TOP: Color = Color::new(0.05, 0.05, 0.09, 1.0);
-const CEIL_BOT: Color = Color::new(0.15, 0.15, 0.20, 1.0);
-const FLOOR_TOP: Color = Color::new(0.20, 0.18, 0.16, 1.0);
-const FLOOR_BOT: Color = Color::new(0.06, 0.06, 0.06, 1.0);
-const WALL_NS: Color = Color::new(0.66, 0.64, 0.70, 1.0);
-const WALL_EW: Color = Color::new(0.46, 0.45, 0.52, 1.0);
-const FOG: Color = Color::new(0.05, 0.05, 0.07, 1.0);
-
 /// `pos` is in grid units, `yaw` radians (+x east, +y south), `bob` a small vertical
 /// head-bob offset in strip-height fraction.
-pub fn draw(grid: &WallGrid, area: Rect, pos: Vec2, yaw: f32, bob: f32) {
+pub fn draw(grid: &WallGrid, theme: &Theme, area: Rect, pos: Vec2, yaw: f32, bob: f32) {
     let dir = vec2(yaw.cos(), yaw.sin());
     let plane = vec2(-dir.y, dir.x) * FOV;
+    let pal = theme.palette;
 
     let horizon = area.y + area.h * (0.5 + bob);
 
-    // Ceiling + floor as vertical gradients, split at the (bobbing) horizon.
-    v_gradient(area.x, area.y, area.w, horizon - area.y, CEIL_TOP, CEIL_BOT);
+    v_gradient(
+        area.x,
+        area.y,
+        area.w,
+        horizon - area.y,
+        pal.ceil_top,
+        pal.ceil_bot,
+    );
     v_gradient(
         area.x,
         horizon,
         area.w,
         area.y + area.h - horizon,
-        FLOOR_TOP,
-        FLOOR_BOT,
+        pal.floor_far,
+        pal.floor_near,
     );
+
+    let tex = &theme.wall;
+    let tw = tex.width();
+    let th = tex.height();
 
     let mut sx = area.x;
     while sx < area.x + area.w {
         let camx = 2.0 * (sx - area.x) / area.w - 1.0;
         let ray = dir + plane * camx;
 
-        let (perp, side) = cast(grid, pos, ray);
-        // Wall strip height from perpendicular distance (fisheye-corrected already).
+        let (perp, side, wall_x) = cast(grid, pos, ray);
         let line_h = area.h / perp.max(0.0001);
-        let mid = horizon;
-        let y0 = (mid - line_h * 0.5).max(area.y);
-        let y1 = (mid + line_h * 0.5).min(area.y + area.h);
+        let full_top = horizon - line_h * 0.5;
+        let y0 = full_top.max(area.y);
+        let y1 = (horizon + line_h * 0.5).min(area.y + area.h);
+        if y1 <= y0 {
+            sx += COL_STEP;
+            continue;
+        }
 
-        let base = if side == 0 { WALL_NS } else { WALL_EW };
-        let shade = (1.0 / (1.0 + perp * 0.15 + perp * perp * 0.02)).clamp(0.06, 1.0);
-        let col = Color::new(
-            base.r * shade + FOG.r * (1.0 - shade),
-            base.g * shade + FOG.g * (1.0 - shade),
-            base.b * shade + FOG.b * (1.0 - shade),
-            1.0,
+        // Fisheye-corrected distance already; fog + face shading are multiplicative.
+        let lit = (1.0 / (1.0 + perp * 0.14 + perp * perp * 0.02)).clamp(0.05, 1.0);
+        let face = if side == 0 { pal.ew_tint } else { 1.0 };
+        let k = lit * face;
+        let tint = Color::new(k, k, k, 1.0);
+
+        let src_x = (wall_x * tw).clamp(0.0, tw - 1.0);
+        let src_y0 = (y0 - full_top) / line_h * th;
+        let src_y1 = (y1 - full_top) / line_h * th;
+        draw_texture_ex(
+            tex,
+            sx,
+            y0,
+            tint,
+            DrawTextureParams {
+                dest_size: Some(vec2(COL_STEP + 0.6, y1 - y0)),
+                source: Some(Rect::new(src_x, src_y0, 1.0, (src_y1 - src_y0).max(0.5))),
+                ..Default::default()
+            },
         );
-        draw_rectangle(sx, y0, COL_STEP + 0.5, y1 - y0, col);
+        // Distance fog as a translucent wash — darkening alone can't tint toward the
+        // theme's fog color.
+        draw_rectangle(
+            sx,
+            y0,
+            COL_STEP + 0.6,
+            y1 - y0,
+            Color::new(pal.fog.r, pal.fog.g, pal.fog.b, 1.0 - lit),
+        );
         sx += COL_STEP;
     }
 }
 
-/// DDA to the first solid grid cell. Returns `(perpendicular distance, side)` where
-/// `side` 0 == an x-facing wall (E/W), 1 == a y-facing wall (N/S).
-fn cast(grid: &WallGrid, pos: Vec2, ray: Vec2) -> (f32, i32) {
+/// DDA to the first solid grid cell. Returns `(perpendicular distance, side, wall_x)`
+/// where `side` 0 == an x-facing wall (E/W), 1 == a y-facing wall (N/S), and `wall_x`
+/// in `0..1` is the hit position along the wall face (texture u).
+fn cast(grid: &WallGrid, pos: Vec2, ray: Vec2) -> (f32, i32, f32) {
     let mut map = ivec2(pos.x.floor() as i32, pos.y.floor() as i32);
     let delta = vec2(
         if ray.x == 0.0 {
@@ -110,11 +138,17 @@ fn cast(grid: &WallGrid, pos: Vec2, ray: Vec2) -> (f32, i32) {
     }
 
     let perp = if side == 0 {
-        sdist.x - delta.x
+        (sdist.x - delta.x).max(0.0001)
     } else {
-        sdist.y - delta.y
+        (sdist.y - delta.y).max(0.0001)
     };
-    (perp.max(0.0001), side)
+    let wall_x = if side == 0 {
+        (pos.y + perp * ray.y).fract()
+    } else {
+        (pos.x + perp * ray.x).fract()
+    };
+    let wall_x = if wall_x < 0.0 { wall_x + 1.0 } else { wall_x };
+    (perp, side, wall_x)
 }
 
 fn v_gradient(x: f32, y: f32, w: f32, h: f32, top: Color, bot: Color) {
@@ -125,12 +159,12 @@ fn v_gradient(x: f32, y: f32, w: f32, h: f32, top: Color, bot: Color) {
     let bh = h / bands as f32;
     for i in 0..bands {
         let t = i as f32 / (bands - 1) as f32;
-        let c = Color::new(
+        let col = Color::new(
             top.r + (bot.r - top.r) * t,
             top.g + (bot.g - top.g) * t,
             top.b + (bot.b - top.b) * t,
             1.0,
         );
-        draw_rectangle(x, y + bh * i as f32, w, bh + 1.0, c);
+        draw_rectangle(x, y + bh * i as f32, w, bh + 1.0, col);
     }
 }

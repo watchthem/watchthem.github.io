@@ -165,8 +165,8 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
         &[18, 20, 22],
     );
 
-    let mut game = Game::new(1);
-    let mut grid = game.maze.wall_grid();
+    let art_seed = screenshot::seed();
+    let (mut game, mut grid, mut theme) = fresh(1, art_seed);
     let mut anim = anim::Anim::new(game.know.pos, game.know.facing);
     let mut dwell = 0.0f32;
     let mut hold = 0.0f32;
@@ -175,17 +175,6 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
 
     let mut cached_inset = view::minimap_inset();
     let mut map_cache = RenderCache::new(cached_inset);
-
-    let new_game = |game: &mut Game,
-                    grid: &mut maze::WallGrid,
-                    anim: &mut anim::Anim,
-                    map_cache: &mut RenderCache,
-                    generation: u32| {
-        *game = Game::new(generation);
-        *grid = game.maze.wall_grid();
-        anim.reset(game.know.pos, game.know.facing);
-        map_cache.mark_dirty();
-    };
 
     loop {
         control.handle_keys();
@@ -197,7 +186,9 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
             dwell = 0.0;
             hold = 0.0;
             daily_done = false;
-            new_game(&mut game, &mut grid, &mut anim, &mut map_cache, 1);
+            (game, grid, theme) = fresh(1, art_seed);
+            anim.reset(game.know.pos, game.know.facing);
+            map_cache.mark_dirty();
         }
 
         let dt = control.scale(get_frame_time().min(0.1));
@@ -214,7 +205,9 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
                         daily_done = true;
                     } else if !cli.once {
                         let next = game.generation + 1;
-                        new_game(&mut game, &mut grid, &mut anim, &mut map_cache, next);
+                        (game, grid, theme) = fresh(next, art_seed);
+                        anim.reset(game.know.pos, game.know.facing);
+                        map_cache.mark_dirty();
                     }
                 }
             } else {
@@ -257,7 +250,7 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
         }
 
         // First-person view fills the stage.
-        view::raycast::draw(&grid, stage, anim.pos, anim.yaw, anim.bob);
+        view::raycast::draw(&grid, &theme, stage, anim.pos, anim.yaw, anim.bob);
 
         // Minimap inset over a translucent backdrop.
         draw_rectangle(
@@ -273,7 +266,7 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
         view::minimap::draw_bot(&game.know, inset, cellf, anim.yaw);
 
         if !control.stream_mode() {
-            draw_header(&game, &control);
+            draw_header(&game, theme.kind, &control);
         }
 
         shot.tick();
@@ -281,6 +274,29 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
         control.draw_overlay();
         next_frame().await;
     }
+}
+
+/// A fresh maze + its raycaster wall grid + its theme (rotates per generation, grain
+/// pinned to `art_seed`).
+fn fresh(generation: u32, art_seed: u64) -> (Game, maze::WallGrid, view::theme::Theme) {
+    let game = Game::new(generation);
+    let grid = game.maze.wall_grid();
+    let kind = view::theme::ThemeKind::for_generation(generation);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let t0 = std::time::Instant::now();
+    let theme = view::theme::Theme::build(kind, art_seed);
+    #[cfg(not(target_arch = "wasm32"))]
+    if generation == 1 {
+        eprintln!(
+            "labyrinth: {} wall texture ({}px) generated in {:?}",
+            kind.label(),
+            view::theme::TEX,
+            t0.elapsed()
+        );
+    }
+
+    (game, grid, theme)
 }
 
 fn score(g: &Game) -> i64 {
@@ -304,7 +320,7 @@ fn verdict_clause(g: &Game) -> String {
     }
 }
 
-fn draw_header(g: &Game, control: &control::Control) {
+fn draw_header(g: &Game, theme: view::theme::ThemeKind, control: &control::Control) {
     let fs = 20.0;
     let y = view::HEADER_H * 0.72;
     let status = match g.outcome {
@@ -319,8 +335,10 @@ fn draw_header(g: &Game, control: &control::Control) {
         format!("seen {:.0}%", g.know.coverage() * 100.0)
     };
     let line = format!(
-        "{status}   gen {}   steps {}   {tail}",
-        g.generation, g.steps,
+        "{status}   {}   gen {}   steps {}   {tail}",
+        theme.label(),
+        g.generation,
+        g.steps,
     );
     draw_text(&line, 10.0, y, fs, HUD);
     let label = control.label();
