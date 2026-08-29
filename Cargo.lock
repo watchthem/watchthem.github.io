@@ -629,6 +629,7 @@ dependencies = [
  "control",
  "game2048",
  "klondike",
+ "labyrinth",
  "macroquad",
  "match-3",
  "minesweeper",
@@ -738,6 +739,17 @@ version = "0.1.0"
 dependencies = [
  "beam_solver",
  "cards",
+ "control",
+ "game_common",
+ "macroquad",
+ "render_cache",
+ "screenshot",
+]
+
+[[package]]
+name = "labyrinth"
+version = "0.1.0"
+dependencies = [
  "control",
  "game_common",
  "macroquad",

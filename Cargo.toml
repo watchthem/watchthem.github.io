@@ -1,5 +1,5 @@
 [workspace]
-members = ["games/snake", "games/arrow-blocks", "games/game2048", "lib/minesweeper", "games/minesweeper", "lib/cards", "games/klondike", "games/spider", "games/sudoku", "games/tetris", "games/match-3", "games/bubble-shooter", "lib/screenshot", "lib/control", "lib/beam_solver", "lib/render_cache", "lib/game_common", "lib/audio", "xtask", "games/water-sort", "bundle"]
+members = ["games/snake", "games/arrow-blocks", "games/game2048", "lib/minesweeper", "games/minesweeper", "lib/cards", "games/klondike", "games/spider", "games/sudoku", "games/tetris", "games/match-3", "games/bubble-shooter", "lib/screenshot", "lib/control", "lib/beam_solver", "lib/render_cache", "lib/game_common", "lib/audio", "xtask", "games/water-sort", "bundle", "games/labyrinth"]
 resolver = "2"
 
 [profile.release]

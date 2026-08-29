@@ -13,7 +13,7 @@ use macroquad::prelude::*;
 /// check`/clippy/`mise run run-bundle` never fail to compile over this, they just show
 /// placeholder art natively until `mise run deploy` (or `build-wasm <game>`) has run. See
 /// `build.rs` and root `CLAUDE.md`'s "Native standalone shell" section.
-const PREVIEW_BYTES: [(&str, &[u8]); 11] = [
+const PREVIEW_BYTES: [(&str, &[u8]); 12] = [
     (
         "arrow-blocks",
         include_bytes!(concat!(env!("OUT_DIR"), "/preview_arrow-blocks.png")),
@@ -29,6 +29,10 @@ const PREVIEW_BYTES: [(&str, &[u8]); 11] = [
     (
         "klondike",
         include_bytes!(concat!(env!("OUT_DIR"), "/preview_klondike.png")),
+    ),
+    (
+        "labyrinth",
+        include_bytes!(concat!(env!("OUT_DIR"), "/preview_labyrinth.png")),
     ),
     (
         "match-3",

@@ -19,6 +19,7 @@ arrow-blocks = { path = "../games/arrow-blocks" }
 bubble-shooter = { path = "../games/bubble-shooter" }
 game2048 = { path = "../games/game2048" }
 klondike = { path = "../games/klondike" }
+labyrinth = { path = "../games/labyrinth" }
 match-3 = { path = "../games/match-3" }
 minesweeper = { path = "../lib/minesweeper" }
 snake = { path = "../games/snake" }

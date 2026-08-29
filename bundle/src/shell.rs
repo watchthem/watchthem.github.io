@@ -384,6 +384,10 @@ async fn run_game(idx: usize) -> control::ExitReason {
             size_to(klondike::conf());
             klondike::play_until_exit().await
         }
+        "labyrinth" => {
+            size_to(labyrinth::conf());
+            labyrinth::play_until_exit().await
+        }
         "match-3" => {
             size_to(match_3::conf());
             match_3::play_until_exit().await
