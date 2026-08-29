@@ -13,7 +13,16 @@ const FOV: f32 = 0.66;
 
 /// `pos` is in grid units, `yaw` radians (+x east, +y south), `bob` a small vertical
 /// head-bob offset in strip-height fraction.
-pub fn draw(grid: &WallGrid, theme: &Theme, area: Rect, pos: Vec2, yaw: f32, bob: f32) {
+#[allow(clippy::too_many_arguments)]
+pub fn draw(
+    grid: &WallGrid,
+    theme: &Theme,
+    area: Rect,
+    pos: Vec2,
+    yaw: f32,
+    bob: f32,
+    light_mul: f32,
+) {
     let dir = vec2(yaw.cos(), yaw.sin());
     let plane = vec2(-dir.y, dir.x) * FOV;
     let pal = theme.palette;
@@ -57,7 +66,7 @@ pub fn draw(grid: &WallGrid, theme: &Theme, area: Rect, pos: Vec2, yaw: f32, bob
         }
 
         // Fisheye-corrected distance already; fog + face shading are multiplicative.
-        let lit = (1.0 / (1.0 + perp * 0.14 + perp * perp * 0.02)).clamp(0.05, 1.0);
+        let lit = (light_mul / (1.0 + perp * 0.14 + perp * perp * 0.02)).clamp(0.05, 1.0);
         let face = if side == 0 { pal.ew_tint } else { 1.0 };
         let k = lit * face;
         let tint = Color::new(k, k, k, 1.0);

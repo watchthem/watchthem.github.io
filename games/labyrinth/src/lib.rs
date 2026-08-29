@@ -166,7 +166,7 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
     );
 
     let art_seed = screenshot::seed();
-    let (mut game, mut grid, mut theme) = fresh(1, art_seed);
+    let (mut game, mut grid, mut theme, mut fx) = fresh(1, art_seed);
     let mut anim = anim::Anim::new(game.know.pos, game.know.facing);
     let mut dwell = 0.0f32;
     let mut hold = 0.0f32;
@@ -186,13 +186,16 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
             dwell = 0.0;
             hold = 0.0;
             daily_done = false;
-            (game, grid, theme) = fresh(1, art_seed);
+            (game, grid, theme, fx) = fresh(1, art_seed);
             anim.reset(game.know.pos, game.know.facing);
             map_cache.mark_dirty();
         }
 
         let dt = control.scale(get_frame_time().min(0.1));
         anim.update(dt);
+        if !game.done() {
+            anim.look_toward(anim::dir_yaw(game.know.look_hint()), dt);
+        }
 
         // Step only once the previous step's animation has fully played out, plus a
         // short dwell — so turn/walk are always visible start to finish.
@@ -205,7 +208,7 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
                         daily_done = true;
                     } else if !cli.once {
                         let next = game.generation + 1;
-                        (game, grid, theme) = fresh(next, art_seed);
+                        (game, grid, theme, fx) = fresh(next, art_seed);
                         anim.reset(game.know.pos, game.know.facing);
                         map_cache.mark_dirty();
                     }
@@ -248,9 +251,18 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
             map_cache = RenderCache::new(inset);
             cached_inset = inset;
         }
+        let time = get_time();
 
-        // First-person view fills the stage.
-        view::raycast::draw(&grid, &theme, stage, anim.pos, anim.yaw, anim.bob);
+        // First-person view fills the stage, then the live fx pass over it.
+        let light = fx.light_mul(time);
+        view::raycast::draw(&grid, &theme, stage, anim.pos, anim.yaw, anim.bob, light);
+        fx.draw_motes(stage, get_frame_time().min(0.1), time);
+        let exit_near = game
+            .know
+            .exit_sight
+            .map(|d| (1.0 - d as f32 / game::LOS_RADIUS as f32).clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        fx.draw_exit_glow(stage, time, exit_near);
 
         // Minimap inset over a translucent backdrop.
         draw_rectangle(
@@ -260,7 +272,6 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
             inset.h + 8.0,
             Color::new(0.02, 0.02, 0.03, 0.72),
         );
-        let time = get_time();
         map_cache.draw(|| view::minimap::draw(&game.know, inset, time));
         let cellf = vec2((anim.pos.x - 1.5) * 0.5, (anim.pos.y - 1.5) * 0.5);
         view::minimap::draw_bot(&game.know, inset, cellf, anim.yaw);
@@ -278,7 +289,10 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
 
 /// A fresh maze + its raycaster wall grid + its theme (rotates per generation, grain
 /// pinned to `art_seed`).
-fn fresh(generation: u32, art_seed: u64) -> (Game, maze::WallGrid, view::theme::Theme) {
+fn fresh(
+    generation: u32,
+    art_seed: u64,
+) -> (Game, maze::WallGrid, view::theme::Theme, view::fx::Fx) {
     let game = Game::new(generation);
     let grid = game.maze.wall_grid();
     let kind = view::theme::ThemeKind::for_generation(generation);
@@ -296,7 +310,8 @@ fn fresh(generation: u32, art_seed: u64) -> (Game, maze::WallGrid, view::theme::
         );
     }
 
-    (game, grid, theme)
+    let fx = view::fx::Fx::build(kind, art_seed);
+    (game, grid, theme, fx)
 }
 
 fn score(g: &Game) -> i64 {

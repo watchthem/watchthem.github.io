@@ -81,6 +81,16 @@ impl Anim {
         self.phase == Phase::Idle
     }
 
+    /// While idle between steps, ease the view toward `target_yaw` (down the corridor
+    /// the bot is about to take) so it doesn't freeze staring at a wall.
+    pub fn look_toward(&mut self, target_yaw: f32, dt: f32) {
+        if self.phase != Phase::Idle {
+            return;
+        }
+        let d = ang_diff(self.yaw, target_yaw);
+        self.yaw += d * (dt * 5.0).clamp(0.0, 1.0);
+    }
+
     /// Snap to a cell/facing with no interpolation (new maze, reseed).
     pub fn reset(&mut self, at: Cell, facing: usize) {
         *self = Anim::new(at, facing);

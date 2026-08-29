@@ -28,6 +28,9 @@ pub struct Knowledge {
     pub pos: Cell,
     pub facing: usize,
     pub exit_seen: Option<Cell>,
+    /// `Some(chebyshev distance)` when the exit is in the bot's current line of sight
+    /// (recomputed every reveal) — drives the exit-glow effect.
+    pub exit_sight: Option<i32>,
     /// Set for the frame a reveal turned up something new — lets the minimap cache
     /// know when to redraw.
     pub dirty: bool,
@@ -44,6 +47,7 @@ impl Knowledge {
             pos: start,
             facing: 2, // south — into the maze from the top-left start
             exit_seen: None,
+            exit_sight: None,
             dirty: true,
         }
     }
@@ -123,6 +127,7 @@ impl Knowledge {
     /// sight is "see down the passage until it walls off or turns".
     pub fn reveal(&mut self, maze: &Maze, radius: i32) {
         let bot = self.pos;
+        let mut exit_sight = if bot == maze.exit { Some(0) } else { None };
         self.reveal_cell(maze, bot);
         for d in 0..4usize {
             if !maze.is_open(bot, d) {
@@ -134,6 +139,9 @@ impl Knowledge {
                 if !maze.in_bounds(c.x, c.y) {
                     break;
                 }
+                if c == maze.exit {
+                    exit_sight = Some((c.x - bot.x).abs().max((c.y - bot.y).abs()));
+                }
                 self.reveal_cell(maze, c);
                 // Stop at a wall ahead or at a bend (corridor no longer runs straight).
                 if !maze.is_open(c, d) {
@@ -141,6 +149,7 @@ impl Knowledge {
                 }
             }
         }
+        self.exit_sight = exit_sight;
         self.update_pruning();
     }
 
@@ -185,6 +194,33 @@ impl Knowledge {
         for (i, p) in self.pruned.iter_mut().enumerate() {
             *p = self.edges[i].known != 0 && !keep[i];
         }
+    }
+
+    /// Best guess at the direction the bot will head next (open, non-pruned, not the
+    /// way it just came, preferring a frontier-ward and less-trodden neighbor) — used
+    /// only to aim the idle "look down the corridor" so the view isn't frozen on a wall
+    /// between steps.
+    pub fn look_hint(&self) -> usize {
+        let from = self.pos;
+        let back = crate::maze::opposite(self.facing);
+        let mut best: Option<usize> = None;
+        let mut best_score = (2u8, u16::MAX);
+        for (d, nb) in self.open_neighbors(from) {
+            if d == back || self.pruned[self.idx(nb)] {
+                continue;
+            }
+            let rank = if self.is_frontier(nb) || self.exit_seen == Some(nb) {
+                0
+            } else {
+                1
+            };
+            let s = (rank, self.visits(nb));
+            if s < best_score {
+                best_score = s;
+                best = Some(d);
+            }
+        }
+        best.unwrap_or(back)
     }
 
     pub fn record_step(&mut self, to: Cell, facing: usize) {

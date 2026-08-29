@@ -1,6 +1,7 @@
 //! Rendering. `minimap` is the knowledge renderer (phase 2). `raycast` (the
 //! first-person view), `theme` and `fx` arrive in later phases.
 
+pub mod fx;
 pub mod minimap;
 pub mod raycast;
 pub mod theme;
