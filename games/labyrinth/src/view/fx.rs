@@ -123,6 +123,28 @@ impl Fx {
         }
     }
 
+    /// Tower climb: a rising light wipe between floors (`p` 0..1 over the hold). Peaks
+    /// at the midpoint so the old floor washes out and the new one fades back in.
+    pub fn draw_floor_wipe(&self, area: Rect, p: f32) {
+        let a = (1.0 - (p * 2.0 - 1.0).abs()).clamp(0.0, 1.0);
+        // A band sweeping up the screen plus an overall brighten.
+        let band_y = area.y + area.h * (1.0 - p);
+        draw_rectangle(
+            area.x,
+            area.y,
+            area.w,
+            area.h,
+            Color::new(0.95, 0.93, 0.8, 0.55 * a),
+        );
+        draw_rectangle(
+            area.x,
+            band_y - 40.0,
+            area.w,
+            80.0,
+            Color::new(1.0, 0.98, 0.9, 0.5 * a),
+        );
+    }
+
     /// Warm pulsing rim when the exit is currently in sight — the one unambiguous
     /// "payoff imminent" cue for a viewer. `near` in 0..1 scales it (closer == stronger).
     pub fn draw_exit_glow(&self, area: Rect, t: f64, near: f32) {

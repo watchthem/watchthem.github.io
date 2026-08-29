@@ -14,6 +14,7 @@ mod maze;
 mod solver;
 mod view;
 
+pub use game::Mode;
 use game::{Game, Outcome};
 
 /// `macroquad::rand` is a process-global RNG, so any test that calls `srand` then reads
@@ -47,6 +48,9 @@ pub fn conf() -> Conf {
 pub struct CliArgs {
     pub debug: bool,
     pub once: bool,
+    /// `--variant tower|dungeon|fog|mirror` — pin a mode instead of the default
+    /// (`TowerClimb`). `None` = the game's V-cycle starting point.
+    pub variant: Option<game::Mode>,
     #[cfg(not(target_arch = "wasm32"))]
     pub no_ui: bool,
 }
@@ -55,13 +59,32 @@ pub struct CliArgs {
 pub fn parse_cli_args() -> CliArgs {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (base, rest) = game_common::parse_base_args(&args);
-    if let Some(other) = rest.first() {
-        eprintln!("unknown argument '{other}' (expected --debug, --once, --no-ui)");
-        std::process::exit(2);
+    let mut variant = None;
+    let mut it = rest.iter();
+    while let Some(tok) = it.next() {
+        match tok.as_str() {
+            "--variant" => {
+                let v = it.next().map(|s| s.as_str()).unwrap_or("");
+                match game::Mode::parse(v) {
+                    Some(m) => variant = Some(m),
+                    None => {
+                        eprintln!("--variant expects tower|dungeon|fog|mirror");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            other => {
+                eprintln!(
+                    "unknown argument '{other}' (expected --debug, --once, --no-ui, --variant <tower|dungeon|fog|mirror>)"
+                );
+                std::process::exit(2);
+            }
+        }
     }
     CliArgs {
         debug: base.debug,
         once: base.once,
+        variant,
         no_ui: base.no_ui,
     }
 }
@@ -71,6 +94,7 @@ pub fn parse_cli_args() -> CliArgs {
     CliArgs {
         debug: false,
         once: false,
+        variant: None,
     }
 }
 
@@ -78,6 +102,7 @@ fn bundled_cli() -> CliArgs {
     CliArgs {
         debug: false,
         once: false,
+        variant: None,
         #[cfg(not(target_arch = "wasm32"))]
         no_ui: false,
     }
@@ -106,7 +131,8 @@ fn log_tick(debug: bool, g: &Game) {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run_headless(cli: CliArgs) -> ! {
     rand::srand(screenshot::seed());
-    let mut g = Game::new(1);
+    let mode = cli.variant.unwrap_or(Mode::TowerClimb);
+    let mut g = Game::with_mode(mode, 1);
     loop {
         if g.tick() {
             log_tick(cli.debug, &g);
@@ -118,7 +144,7 @@ pub fn run_headless(cli: CliArgs) -> ! {
                 println!("{}", g.result_line());
                 std::process::exit(0);
             }
-            g = Game::new(g.generation + 1);
+            g = Game::with_mode(mode, g.generation + 1);
         }
     }
 }
@@ -159,14 +185,15 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
     rand::srand(control.seed());
     render_cache::prewarm_glyphs(
         &[
-            "Labyrinth 0123456789 Won Stuck Explore steps ratio x",
+            "Labyrinth 0123456789 UP OUT LOST Tower Dungeon Fog Mirror floor keys bumps steps x optimal",
             &control.label(),
         ],
         &[18, 20, 22],
     );
 
     let art_seed = screenshot::seed();
-    let (mut game, mut grid, mut theme, mut fx) = fresh(1, art_seed);
+    let mut mode = cli.variant.unwrap_or(Mode::TowerClimb);
+    let (mut game, mut grid, mut theme, mut fx) = fresh(mode, 1, art_seed);
     let mut anim = anim::Anim::new(game.know.pos, game.know.facing);
     let mut dwell = 0.0f32;
     let mut hold = 0.0f32;
@@ -186,7 +213,18 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
             dwell = 0.0;
             hold = 0.0;
             daily_done = false;
-            (game, grid, theme, fx) = fresh(1, art_seed);
+            (game, grid, theme, fx) = fresh(mode, 1, art_seed);
+            anim.reset(game.know.pos, game.know.facing);
+            map_cache.mark_dirty();
+        }
+
+        // `V` (or a one-finger swipe) cycles the mode — project convention.
+        if is_key_pressed(KeyCode::V) || control.variant_swipe() {
+            mode = mode.next();
+            dwell = 0.0;
+            hold = 0.0;
+            daily_done = false;
+            (game, grid, theme, fx) = fresh(mode, 1, art_seed);
             anim.reset(game.know.pos, game.know.facing);
             map_cache.mark_dirty();
         }
@@ -207,8 +245,14 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
                     if control.daily_mode() {
                         daily_done = true;
                     } else if !cli.once {
-                        let next = game.generation + 1;
-                        (game, grid, theme, fx) = fresh(next, art_seed);
+                        // Won → next floor/maze harder; Stuck/Survived → restart the
+                        // ladder from floor 1.
+                        let next = if game.outcome == Some(Outcome::Won) {
+                            game.generation + 1
+                        } else {
+                            1
+                        };
+                        (game, grid, theme, fx) = fresh(mode, next, art_seed);
                         anim.reset(game.know.pos, game.know.facing);
                         map_cache.mark_dirty();
                     }
@@ -221,6 +265,8 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
                     log_tick(cli.debug, &game);
                     if let Some((from, dir)) = game.last_step {
                         anim.begin_step(from, dir);
+                    } else if let Some((from, dir)) = game.bump {
+                        anim.begin_bump(from, dir);
                     }
                     if game.know.dirty {
                         map_cache.mark_dirty();
@@ -272,9 +318,15 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
             inset.h + 8.0,
             Color::new(0.02, 0.02, 0.03, 0.72),
         );
-        map_cache.draw(|| view::minimap::draw(&game.know, inset, time));
+        let fog = game.mode == Mode::Fog;
+        map_cache.draw(|| view::minimap::draw(&game.know, inset, time, fog));
         let cellf = vec2((anim.pos.x - 1.5) * 0.5, (anim.pos.y - 1.5) * 0.5);
         view::minimap::draw_bot(&game.know, inset, cellf, anim.yaw);
+
+        // Tower climb: wipe between floors while the finished maze is held.
+        if game.mode == Mode::TowerClimb && game.outcome == Some(Outcome::Won) {
+            fx.draw_floor_wipe(stage, (hold / 0.9).clamp(0.0, 1.0));
+        }
 
         if !control.stream_mode() {
             draw_header(&game, theme.kind, &control);
@@ -290,10 +342,11 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
 /// A fresh maze + its raycaster wall grid + its theme (rotates per generation, grain
 /// pinned to `art_seed`).
 fn fresh(
+    mode: Mode,
     generation: u32,
     art_seed: u64,
 ) -> (Game, maze::WallGrid, view::theme::Theme, view::fx::Fx) {
-    let game = Game::new(generation);
+    let game = Game::with_mode(mode, generation);
     let grid = game.maze.wall_grid();
     let kind = view::theme::ThemeKind::for_generation(generation);
 
@@ -339,21 +392,38 @@ fn draw_header(g: &Game, theme: view::theme::ThemeKind, control: &control::Contr
     let fs = 20.0;
     let y = view::HEADER_H * 0.72;
     let status = match g.outcome {
-        Some(Outcome::Won) => "OUT",
+        Some(Outcome::Won) => g.mode.win_verb(),
         Some(Outcome::Stuck) => "LOST",
         Some(Outcome::Survived) => "…",
         None => g.mode.label(),
     };
-    let tail = if g.done() {
-        format!("{:.1}x optimal", g.optimal_ratio())
+    let floor_word = if g.mode == Mode::TowerClimb {
+        "floor"
     } else {
-        format!("seen {:.0}%", g.know.coverage() * 100.0)
+        "gen"
+    };
+    let mut extra = String::new();
+    if g.mode == Mode::DungeonCrawl {
+        extra = format!(
+            "   keys {}/{}",
+            g.know.keys_held.count_ones(),
+            g.maze.keys.len()
+        );
+    } else if g.mode == Mode::Mirror {
+        extra = format!("   bumps {}", g.bumps);
+    }
+    // Theme name only when it isn't already echoed by the mode word.
+    let theme_tag = if theme.label() == status {
+        String::new()
+    } else {
+        format!("   {}", theme.label())
     };
     let line = format!(
-        "{status}   {}   gen {}   steps {}   {tail}",
-        theme.label(),
+        "{status}{theme_tag}   {} {}   steps {}   seen {:.0}%{extra}",
+        floor_word,
         g.generation,
         g.steps,
+        g.know.coverage() * 100.0,
     );
     draw_text(&line, 10.0, y, fs, HUD);
     let label = control.label();

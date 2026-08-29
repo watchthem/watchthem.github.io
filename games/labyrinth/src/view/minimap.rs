@@ -17,6 +17,19 @@ const BOT: Color = Color::new(1.0, 0.82, 0.25, 1.0);
 const EXIT: Color = Color::new(0.35, 0.70, 1.0, 1.0);
 const START: Color = Color::new(0.5, 0.5, 0.6, 1.0);
 
+/// Fog: a cell dims to its floor brightness over this many ticks of not being seen.
+/// (The bot keeps the layout in memory — the maze may have mutated behind it, so the
+/// faded cells are the ones its map could now be wrong about.)
+const FOG_FADE_TICKS: f32 = 26.0;
+
+/// Distinct colours per key id (Dungeon mode).
+const KEY_COLORS: [Color; 4] = [
+    Color::new(1.0, 0.80, 0.20, 1.0),
+    Color::new(0.35, 0.80, 1.0, 1.0),
+    Color::new(0.55, 1.0, 0.45, 1.0),
+    Color::new(1.0, 0.45, 0.75, 1.0),
+];
+
 /// Cell pixel size + top-left origin so the `w x h` grid fits centered in `area`.
 fn layout(k: &Knowledge, area: Rect) -> (f32, Vec2) {
     let cell = (area.w / k.w as f32)
@@ -31,9 +44,17 @@ fn layout(k: &Knowledge, area: Rect) -> (f32, Vec2) {
 
 /// Draws the static knowledge layer (everything that only changes on a reveal). The
 /// live bot marker is drawn separately by `draw_bot` every frame on top.
-pub fn draw(k: &Knowledge, area: Rect, time: f64) {
+pub fn draw(k: &Knowledge, area: Rect, time: f64, fog: bool) {
     let (cell, origin) = layout(k, area);
     let px = |c: Cell| vec2(origin.x + c.x as f32 * cell, origin.y + c.y as f32 * cell);
+    // Fog mode: cells fade as they go stale (0 = fresh, 1 = about to be forgotten).
+    let freshness = |c: Cell| -> f32 {
+        if fog {
+            (1.0 - k.age(c) as f32 / FOG_FADE_TICKS).clamp(0.15, 1.0)
+        } else {
+            1.0
+        }
+    };
 
     draw_rectangle(area.x, area.y, area.w, area.h, UNSEEN);
 
@@ -51,7 +72,13 @@ pub fn draw(k: &Knowledge, area: Rect, time: f64) {
                 FLOOR
             };
             let v = (k.visits(c) as f32 * 0.14).min(0.5);
-            let col = Color::new(base.r + v, base.g + v * 0.7, base.b + v * 0.3, 1.0);
+            let f = freshness(c);
+            let col = Color::new(
+                (base.r + v) * f,
+                (base.g + v * 0.7) * f,
+                (base.b + v * 0.3) * f,
+                1.0,
+            );
             draw_rectangle(p.x, p.y, cell, cell, col);
         }
     }
@@ -98,6 +125,70 @@ pub fn draw(k: &Knowledge, area: Rect, time: f64) {
                 draw_line(p.x + cell, p.y, p.x + cell, p.y + cell, t, WALL);
             }
         }
+    }
+
+    // Locked doors: a bar across the edge, in the key's colour.
+    for y in 0..k.h as i32 {
+        for x in 0..k.w as i32 {
+            let c = Cell { x, y };
+            if !k.cell_seen(c) {
+                continue;
+            }
+            let p = px(c);
+            for d in 0..4usize {
+                if let Some(key) = k.edge_locked(c, d) {
+                    let col = KEY_COLORS[key as usize % KEY_COLORS.len()];
+                    let bar = (cell * 0.22).max(2.0);
+                    let (bx, by, bw, bh) = match d {
+                        0 => (p.x, p.y - bar * 0.5, cell, bar),
+                        2 => (p.x, p.y + cell - bar * 0.5, cell, bar),
+                        3 => (p.x - bar * 0.5, p.y, bar, cell),
+                        _ => (p.x + cell - bar * 0.5, p.y, bar, cell),
+                    };
+                    draw_rectangle(bx, by, bw, bh, col);
+                }
+            }
+        }
+    }
+
+    // Phantom edges (mirror lies the bot currently believes): a faint cyan tick, so a
+    // viewer can see where the bot is about to be fooled.
+    for y in 0..k.h as i32 {
+        for x in 0..k.w as i32 {
+            let c = Cell { x, y };
+            if !k.cell_seen(c) {
+                continue;
+            }
+            let p = px(c);
+            for d in 0..4usize {
+                if !k.edge_phantom(c, d) {
+                    continue;
+                }
+                let (mx, my) = match d {
+                    0 => (p.x + cell * 0.5, p.y),
+                    2 => (p.x + cell * 0.5, p.y + cell),
+                    3 => (p.x, p.y + cell * 0.5),
+                    _ => (p.x + cell, p.y + cell * 0.5),
+                };
+                draw_circle(
+                    mx,
+                    my,
+                    (cell * 0.14).max(1.5),
+                    Color::new(0.5, 0.9, 1.0, 0.5),
+                );
+            }
+        }
+    }
+
+    // Keys spotted but not yet collected: a diamond in the key's colour.
+    for &(kc, key) in &k.keys_seen {
+        let p = px(kc);
+        let col = KEY_COLORS[key as usize % KEY_COLORS.len()];
+        let cx = p.x + cell * 0.5;
+        let cy = p.y + cell * 0.5;
+        let r = cell * 0.30;
+        draw_triangle(vec2(cx, cy - r), vec2(cx + r, cy), vec2(cx, cy + r), col);
+        draw_triangle(vec2(cx, cy - r), vec2(cx - r, cy), vec2(cx, cy + r), col);
     }
 
     // Start marker.

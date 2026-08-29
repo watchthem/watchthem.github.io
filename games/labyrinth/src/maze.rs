@@ -33,12 +33,38 @@ impl Cell {
     }
 }
 
+/// What lies on one edge of a cell, from ground truth.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EdgeKind {
+    Wall,
+    Open,
+    /// A wall that reflects — looks like an opening but can't be walked through
+    /// (Mirror mode).
+    Mirror,
+    /// A doorway gated by key `id` (Dungeon mode).
+    Locked(u8),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Lock {
+    pub cell: Cell,
+    pub dir: usize,
+    pub key: u8,
+}
+
 pub struct Maze {
     pub w: usize,
     pub h: usize,
-    /// Per-cell bitmask: bit `d` set => passage open toward `DIRS[d]`. A wall between
-    /// two cells is recorded on *both* cells (symmetric).
+    /// Per-cell bitmask: bit `d` set => passage open toward `DIRS[d]` (pure geometry —
+    /// a locked door still has its bit set; a mirror does not). Symmetric across both
+    /// cells of an edge.
     open: Vec<u8>,
+    /// Per-cell bitmask: bit `d` set => that edge is a mirror (a special wall).
+    mirror: Vec<u8>,
+    /// Locked doors (sparse — at most a handful). Stored once per edge.
+    pub locks: Vec<Lock>,
+    /// Keys lying on the floor, `(cell, key id)` (Dungeon mode).
+    pub keys: Vec<(Cell, u8)>,
     pub start: Cell,
     pub exit: Cell,
 }
@@ -59,10 +85,77 @@ impl Maze {
         self.in_bounds(c.x, c.y)
     }
 
-    /// Is there a passage from `c` toward `DIRS[d]`?
+    /// Is there passage geometry from `c` toward `DIRS[d]`? (A locked door counts; a
+    /// mirror does not.) For actual traversal use `passable`; for line of sight use
+    /// `transparent`.
     #[inline]
     pub fn is_open(&self, c: Cell, d: usize) -> bool {
         self.open[self.idx(c)] & (1 << d) != 0
+    }
+
+    #[inline]
+    pub fn is_mirror(&self, c: Cell, d: usize) -> bool {
+        self.mirror[self.idx(c)] & (1 << d) != 0
+    }
+
+    pub fn lock_at(&self, c: Cell, d: usize) -> Option<u8> {
+        let nb = c.step(d);
+        self.locks.iter().find_map(|l| {
+            if (l.cell == c && l.dir == d) || (l.cell == nb && l.dir == opposite(d)) {
+                Some(l.key)
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn edge(&self, c: Cell, d: usize) -> EdgeKind {
+        if !self.is_open(c, d) {
+            return if self.is_mirror(c, d) {
+                EdgeKind::Mirror
+            } else {
+                EdgeKind::Wall
+            };
+        }
+        match self.lock_at(c, d) {
+            Some(k) => EdgeKind::Locked(k),
+            None => EdgeKind::Open,
+        }
+    }
+
+    /// Can line of sight pass through this edge? (No, through a closed door or a mirror.)
+    #[inline]
+    pub fn transparent(&self, c: Cell, d: usize) -> bool {
+        matches!(self.edge(c, d), EdgeKind::Open)
+    }
+
+    /// Can the bot walk through this edge, holding `keys` (bit `k` set == holds key k)?
+    pub fn passable(&self, c: Cell, d: usize, keys: u32) -> bool {
+        match self.edge(c, d) {
+            EdgeKind::Open => true,
+            EdgeKind::Locked(k) => keys & (1 << k) != 0,
+            EdgeKind::Wall | EdgeKind::Mirror => false,
+        }
+    }
+
+    /// Flip one edge open<->wall, both sides (Fog mode mutation). No-op at the border.
+    pub fn toggle_wall(&mut self, c: Cell, d: usize) {
+        let b = c.step(d);
+        if !self.cell_in_bounds(b) {
+            return;
+        }
+        let (ic, ib) = (self.idx(c), self.idx(b));
+        self.open[ic] ^= 1 << d;
+        self.open[ib] ^= 1 << opposite(d);
+    }
+
+    fn set_mirror(&mut self, c: Cell, d: usize) {
+        let b = c.step(d);
+        let (ic, ib) = (self.idx(c), self.idx(b));
+        self.mirror[ic] |= 1 << d;
+        if self.cell_in_bounds(b) {
+            self.mirror[ib] |= 1 << opposite(d);
+        }
     }
 
     /// Number of open passages out of `c` (1 == dead end).
@@ -121,6 +214,7 @@ pub struct WallGrid {
     pub gw: usize,
     pub gh: usize,
     solid: Vec<bool>,
+    mirror: Vec<bool>,
 }
 
 impl WallGrid {
@@ -130,6 +224,14 @@ impl WallGrid {
             return true;
         }
         self.solid[gy as usize * self.gw + gx as usize]
+    }
+
+    #[inline]
+    pub fn is_mirror(&self, gx: i32, gy: i32) -> bool {
+        if gx < 0 || gy < 0 || gx as usize >= self.gw || gy as usize >= self.gh {
+            return false;
+        }
+        self.mirror[gy as usize * self.gw + gx as usize]
     }
     /// Grid coordinate of a cell's center square.
     #[inline]
@@ -143,21 +245,30 @@ impl Maze {
         let gw = 2 * self.w + 1;
         let gh = 2 * self.h + 1;
         let mut solid = vec![true; gw * gh];
+        let mut mirror = vec![false; gw * gh];
         for y in 0..self.h as i32 {
             for x in 0..self.w as i32 {
                 let c = Cell { x, y };
                 solid[(2 * y as usize + 1) * gw + (2 * x as usize + 1)] = false;
-                for d in [1usize, 2] {
-                    // East / South openings carve the shared edge square.
+                for (d, &(dx, dy)) in DIRS.iter().enumerate() {
+                    let ex = (2 * x + 1 + dx) as usize;
+                    let ey = (2 * y + 1 + dy) as usize;
+                    // A locked doorway is geometrically open (you see a passage); a
+                    // mirror is a solid wall flagged for the raycaster to reflect off.
                     if self.is_open(c, d) {
-                        let ex = (2 * x + 1 + DIRS[d].0) as usize;
-                        let ey = (2 * y + 1 + DIRS[d].1) as usize;
                         solid[ey * gw + ex] = false;
+                    } else if self.is_mirror(c, d) {
+                        mirror[ey * gw + ex] = true;
                     }
                 }
             }
         }
-        WallGrid { gw, gh, solid }
+        WallGrid {
+            gw,
+            gh,
+            solid,
+            mirror,
+        }
     }
 }
 
@@ -170,6 +281,9 @@ pub fn generate(w: usize, h: usize, braid: f32) -> Maze {
         w,
         h,
         open: vec![0u8; w * h],
+        mirror: vec![0u8; w * h],
+        locks: Vec::new(),
+        keys: Vec::new(),
         start: Cell { x: 0, y: 0 },
         exit: Cell {
             x: w as i32 - 1,
@@ -231,6 +345,175 @@ pub fn generate(w: usize, h: usize, braid: f32) -> Maze {
     }
 
     m
+}
+
+impl Maze {
+    /// Shortest path `start -> to` over `is_open` geometry, as a cell list including
+    /// both ends (empty if unreachable). BFS parent-trace.
+    pub fn path_to(&self, to: Cell) -> Vec<Cell> {
+        let n = self.w * self.h;
+        let mut prev = vec![usize::MAX; n];
+        let mut seen = vec![false; n];
+        let si = self.idx(self.start);
+        seen[si] = true;
+        let mut q = std::collections::VecDeque::new();
+        q.push_back(self.start);
+        while let Some(c) = q.pop_front() {
+            if c == to {
+                break;
+            }
+            for (_, nb) in self.neighbors(c) {
+                let j = self.idx(nb);
+                if !seen[j] {
+                    seen[j] = true;
+                    prev[j] = self.idx(c);
+                    q.push_back(nb);
+                }
+            }
+        }
+        let ti = self.idx(to);
+        if !seen[ti] {
+            return Vec::new();
+        }
+        let mut path = vec![to];
+        let mut cur = ti;
+        while cur != si {
+            cur = prev[cur];
+            path.push(Cell {
+                x: (cur % self.w) as i32,
+                y: (cur / self.w) as i32,
+            });
+        }
+        path.reverse();
+        path
+    }
+
+    /// Cells reachable from `start` over open geometry while treating locks with index
+    /// `>= barrier` as shut (locks below that are assumed already keyed).
+    fn reachable_with_locks_below(&self, barrier: usize) -> Vec<bool> {
+        let n = self.w * self.h;
+        let mut seen = vec![false; n];
+        seen[self.idx(self.start)] = true;
+        let mut q = std::collections::VecDeque::new();
+        q.push_back(self.start);
+        while let Some(c) = q.pop_front() {
+            for d in 0..4usize {
+                if !self.is_open(c, d) {
+                    continue;
+                }
+                // A lock at index >= barrier blocks; below barrier is passable.
+                let blocked = self.locks.iter().enumerate().any(|(i, l)| {
+                    i >= barrier
+                        && ((l.cell == c && l.dir == d)
+                            || (l.cell == c.step(d) && l.dir == opposite(d)))
+                });
+                if blocked {
+                    continue;
+                }
+                let nb = c.step(d);
+                let j = self.idx(nb);
+                if !seen[j] {
+                    seen[j] = true;
+                    q.push_back(nb);
+                }
+            }
+        }
+        seen
+    }
+
+    /// Dungeon mode: place `n_locks` doors along the solution path and a matching key
+    /// for each in a region reachable before that door — solvable by construction
+    /// (collect keys in path order, each opens the next barrier).
+    pub fn add_dungeon(&mut self, n_locks: usize) {
+        let path = self.path_to(self.exit);
+        if path.len() < 6 || n_locks == 0 {
+            return;
+        }
+        let n_locks = n_locks.min(4).min((path.len() - 2) / 3);
+        for i in 0..n_locks {
+            // Space the doors down the path (avoid the first/last cell).
+            let frac = (i + 1) as f32 / (n_locks + 1) as f32;
+            let pi = ((path.len() - 1) as f32 * frac) as usize;
+            let (a, b) = (path[pi], path[pi + 1]);
+            let d = (0..4usize)
+                .find(|&d| a.step(d) == b)
+                .expect("path step is cardinal");
+            self.locks.push(Lock {
+                cell: a,
+                dir: d,
+                key: i as u8,
+            });
+        }
+        // Keys: for door i, anywhere reachable with doors < i open but not door i.
+        for i in 0..n_locks {
+            let before = self.reachable_with_locks_below(i);
+            let on_path: std::collections::HashSet<usize> =
+                path.iter().map(|&c| self.idx(c)).collect();
+            let mut cands: Vec<Cell> = (0..self.w * self.h)
+                .filter(|&j| before[j] && !on_path.contains(&j))
+                .map(|j| Cell {
+                    x: (j % self.w) as i32,
+                    y: (j / self.w) as i32,
+                })
+                .collect();
+            if cands.is_empty() {
+                // Fall back to any reachable cell that isn't start.
+                cands = (0..self.w * self.h)
+                    .filter(|&j| before[j] && j != self.idx(self.start))
+                    .map(|j| Cell {
+                        x: (j % self.w) as i32,
+                        y: (j / self.w) as i32,
+                    })
+                    .collect();
+            }
+            if cands.is_empty() {
+                continue;
+            }
+            // Prefer a dead end so the key sits at the end of a side branch.
+            let dead_ends: Vec<Cell> = cands
+                .iter()
+                .copied()
+                .filter(|&c| self.degree(c) == 1)
+                .collect();
+            let pool = if dead_ends.is_empty() {
+                &cands
+            } else {
+                &dead_ends
+            };
+            let pick = pool[gen_range(0usize, pool.len())];
+            self.keys.push((pick, i as u8));
+        }
+    }
+
+    /// Mirror mode: turn `n` corridor-facing walls into mirrors — a wall the bot's line
+    /// of sight will read as an opening. Chosen at dead ends / straight runs so the lie
+    /// looks like a real branch.
+    pub fn add_mirrors(&mut self, n: usize) {
+        let mut placed = 0;
+        let mut tries = 0;
+        while placed < n && tries < 400 {
+            tries += 1;
+            let c = Cell {
+                x: gen_range(0i32, self.w as i32),
+                y: gen_range(0i32, self.h as i32),
+            };
+            // Only where the bot actually travels: a cell it can stand in with a wall
+            // opposite an existing opening (so the mirror faces down a corridor).
+            let openings: Vec<usize> = (0..4).filter(|&d| self.is_open(c, d)).collect();
+            if openings.is_empty() {
+                continue;
+            }
+            let want = opposite(openings[gen_range(0usize, openings.len())]);
+            if self.is_open(c, want)
+                || self.is_mirror(c, want)
+                || !self.cell_in_bounds(c.step(want))
+            {
+                continue;
+            }
+            self.set_mirror(c, want);
+            placed += 1;
+        }
+    }
 }
 
 #[cfg(test)]

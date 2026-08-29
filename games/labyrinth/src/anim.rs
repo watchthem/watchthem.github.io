@@ -3,9 +3,8 @@
 //! head-bob. The solver decides on the tick; the animation plays that decision out over
 //! roughly the tick interval.
 //!
-//! `Idle -> Turn -> Walk -> (Bump) -> Idle`. `Bump` is unused until phase 6's mirror
-//! maze (the bot walks into a phantom passage and recoils) but the shape is built now
-//! so that lands as a state, not a rewrite.
+//! `Idle -> Turn -> Walk -> Idle` for a normal step; `Idle -> Turn -> Bump -> Idle`
+//! when the bot walks into a mirror it believed was a passage (Mirror mode).
 
 use crate::maze::{Cell, DIRS, WallGrid};
 use macroquad::prelude::*;
@@ -13,15 +12,14 @@ use std::f32::consts::{PI, TAU};
 
 const TURN_SECS: f32 = 0.09;
 const WALK_SECS: f32 = 0.16;
-#[allow(dead_code)] // phase 6 (mirror maze)
-const BUMP_SECS: f32 = 0.14;
+const BUMP_SECS: f32 = 0.18;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Phase {
     Idle,
     Turn,
     Walk,
-    #[allow(dead_code)] // phase 6 (mirror maze)
+    /// Mirror mode: lunge at the glass and recoil.
     Bump,
 }
 
@@ -53,6 +51,9 @@ pub struct Anim {
     pub pos: Vec2,
     pub yaw: f32,
     pub bob: f32,
+    /// Set by `begin_bump`: the `Turn` that's running should hand off to `Bump`, not
+    /// `Walk`.
+    after_turn_bump: bool,
 }
 
 fn cell_pos(c: Cell) -> Vec2 {
@@ -74,6 +75,7 @@ impl Anim {
             pos: p,
             yaw: y,
             bob: 0.0,
+            after_turn_bump: false,
         }
     }
 
@@ -114,6 +116,21 @@ impl Anim {
         };
     }
 
+    /// The bot walked into a mirror it thought was open: turn to face it, lunge a third
+    /// of a cell and recoil (Mirror mode).
+    pub fn begin_bump(&mut self, from: Cell, dir: usize) {
+        self.yaw_from = self.yaw;
+        self.yaw_to = self.yaw + ang_diff(self.yaw, dir_yaw(dir));
+        self.pos_from = cell_pos(from);
+        self.pos_to = cell_pos(Cell {
+            x: from.x + DIRS[dir].0,
+            y: from.y + DIRS[dir].1,
+        });
+        self.t = 0.0;
+        self.phase = Phase::Turn;
+        self.after_turn_bump = true;
+    }
+
     pub fn update(&mut self, dt: f32) {
         match self.phase {
             Phase::Idle => {
@@ -125,7 +142,12 @@ impl Anim {
                 self.yaw = self.yaw_from + (self.yaw_to - self.yaw_from) * ease(k);
                 if k >= 1.0 {
                     self.yaw = self.yaw_to;
-                    self.phase = Phase::Walk;
+                    self.phase = if self.after_turn_bump {
+                        self.after_turn_bump = false;
+                        Phase::Bump
+                    } else {
+                        Phase::Walk
+                    };
                     self.t = 0.0;
                 }
             }
