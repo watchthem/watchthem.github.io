@@ -599,6 +599,10 @@ fn game_flavor(name: &str) -> &'static str {
             "You poured red into blue and called it a plan. It has never once reached \
             for undo, and finds yours touching."
         }
+        "labyrinth" => {
+            "You keep one hand on the wall and call it a strategy. It let go of the \
+            wall a long time ago and it's nearly at the stairs."
+        }
         _ => "You would have done it differently. It would not have listened.",
     }
 }
@@ -1419,6 +1423,7 @@ pub fn description(name: &str) -> String {
         "match-3" => "A match-3 puzzle that plays itself. An AI lines up combos you would not have spotted and clears the board without asking.".into(),
         "bubble-shooter" => "Bubble Shooter played by an AI with better aim than yours. It banks shots into gaps you would never have taken.".into(),
         "water-sort" => "Water Sort played by an AI that has never needed an undo. It pours a mess of colors back into order, endlessly.".into(),
+        "labyrinth" => "Labyrinth, explored by an AI that can only see one corridor at a time. The map beside it fills in as it goes — watch it work out the whole floor and still take the long way to the exit.".into(),
         _ => format!("Watch an AI play {title} automatically in your browser."),
     }
 }
