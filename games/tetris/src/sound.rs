@@ -847,6 +847,7 @@ mod tests {
     /// --nocapture`.
     #[test]
     #[ignore]
+    #[allow(clippy::disallowed_methods)] // native-only timing test
     fn time_synthesis() {
         let start = std::time::Instant::now();
         let intro = korobeiniki_track();

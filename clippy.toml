@@ -1,0 +1,7 @@
+# `Instant::now()` / `SystemTime::now()` panic on wasm32-unknown-unknown ("unreachable
+# executed" in the browser) — use `macroquad::miniquad::date::now()`. Native-only timing
+# (benches, cfg-gated diagnostics, tests) opts out with #[allow(clippy::disallowed_methods)].
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "panics on wasm32 — use miniquad::date::now(), or cfg-gate native-only timing and allow" },
+    { path = "std::time::SystemTime::now", reason = "panics on wasm32 — use miniquad::date::now(), or cfg-gate native-only timing and allow" },
+]

@@ -52,7 +52,7 @@ change behind our back, so no need to duplicate keydown handling in page JS).
 (a process-wide flag every `audio::Clip::play_once`/`play_looped` checks — games never
 check `control.muted()` themselves before playing a sound). On WASM, muting
 *additionally* calls `hcg_set_audio_muted` to suspend/resume the real browser
-`AudioContext` (`xtask::audio_mute_bridge` + `xtask::audio_context_capture_script`, which
+`AudioContext` (`xtask::audio_bridge` + `xtask::audio_context_capture_script`, which
 must run *before* `mq_js_bundle.js` — unlike every other bridge — to wrap
 `window.AudioContext` and capture the instance quad-snd's bundled audio backend
 constructs, since nothing else exposes it) — genuinely releasing the audio hardware while

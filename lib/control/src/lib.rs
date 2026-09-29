@@ -51,7 +51,7 @@ unsafe extern "C" {
     /// game" — the native half is `Control::popup_open`, read directly since it's a
     /// Rust-side bool there instead of a DOM class to query.
     fn hcg_is_popup_open() -> i32;
-    /// Suspends/resumes the browser's `AudioContext` (see `xtask::audio_mute_bridge`
+    /// Suspends/resumes the browser's `AudioContext` (see `xtask::audio_bridge`
     /// and the capture script it depends on) so muting genuinely releases the audio
     /// hardware — e.g. a connected Bluetooth headset — rather than just silencing
     /// playback while still holding the device open. `muted` is `0`/`1`.

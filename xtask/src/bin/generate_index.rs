@@ -1,10 +1,10 @@
 //! Generates dist/index.html (the game list) and dist/sitemap.xml.
-use maud::{DOCTYPE, PreEscaped, html};
+use maud::{DOCTYPE, Markup, PreEscaped, html};
 use std::path::Path;
 use xtask::{
     all_games, base_url, description, favicon_links, gtag_head, homepage_json_ld, manifest_json,
-    minify_js, preview_srcset, pwa_head, social_image, sw_register_bridge, title,
-    wall_analytics_bridge, wall_json_ld, wall_live_bridge,
+    minify_js, preview_srcset, pwa_head, social_image, sw_register_bridge, theme_init_script,
+    title, wall_analytics_bridge, wall_json_ld, wall_live_bridge,
 };
 
 /// Feeds `meta description`, `og:description`, the PWA manifest's `description` and the
@@ -41,6 +41,27 @@ const STYLE: &str = r#"
   --text-dim: #a89a86;
   --accent: #d4a373;
   --border: rgba(212, 163, 115, 0.18);
+  --heading: #f0ece2;
+  --card-bg: #1c1712;
+  --card-title: #e7c98f;
+  --shadow: rgba(0, 0, 0, 0.65);
+  --postcard-shadow: rgba(0, 0, 0, 0.4);
+}
+
+/* Set by xtask::theme_init_script from the hcg_theme cookie / prefers-color-scheme. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5efe4;
+  --cream: #fffdf8;
+  --text: #3a2d1f;
+  --text-dim: #6e5d48;
+  --accent: #9a5b22;
+  --border: rgba(154, 91, 34, 0.22);
+  --heading: #2c2015;
+  --card-bg: #fffaf2;
+  --card-title: #7a4a1c;
+  --shadow: rgba(60, 40, 20, 0.28);
+  --postcard-shadow: rgba(60, 40, 20, 0.18);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -80,7 +101,7 @@ header h1 {
   font-family: 'Fraunces', serif;
   font-weight: 600;
   font-size: clamp(1.7rem, 7vw, 2.5rem);
-  color: var(--cream);
+  color: var(--heading);
 }
 
 header .kicker {
@@ -139,7 +160,7 @@ header .wall-link:hover {
   padding: 12px;
   border-radius: 14px;
   background: linear-gradient(160deg, rgba(212, 163, 115, 0.09), rgba(0, 0, 0, 0) 60%);
-  box-shadow: 0 30px 60px -24px rgba(0, 0, 0, 0.65);
+  box-shadow: 0 30px 60px -24px var(--shadow);
 }
 
 .scene-card::before {
@@ -214,7 +235,7 @@ header .wall-link:hover {
   color: var(--ink);
   border-radius: 4px;
   padding: 1rem 1.1rem;
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 12px 24px var(--postcard-shadow);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -308,7 +329,7 @@ header .wall-link:hover {
   display: flex;
   flex-direction: column;
   border-radius: 0.75rem;
-  background: #1c1712;
+  background: var(--card-bg);
   border: 1px solid var(--border);
   text-decoration: none;
   color: inherit;
@@ -339,7 +360,7 @@ header .wall-link:hover {
   font-family: 'Fraunces', serif;
   font-size: 1.05rem;
   font-weight: 600;
-  color: #e7c98f;
+  color: var(--card-title);
   margin-bottom: 0.35rem;
 }
 
@@ -381,15 +402,16 @@ header .wall-link:hover {
 // per-tile resolution — see its doc comment for the budget rule and why (iOS Safari's
 // WebGL context cap).
 const WALL_STYLE: &str = r#"
-:root { color-scheme: dark; }
+:root { color-scheme: dark; --bg: #171310; --text: #e7ddcd; --text-dim: #a89a86; --accent: #d4a373; }
+:root[data-theme="light"] { color-scheme: light; --bg: #f5efe4; --text: #3a2d1f; --text-dim: #6e5d48; --accent: #9a5b22; }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { background: #171310; color: #e7ddcd; min-height: 100%; }
+html, body { background: var(--bg); color: var(--text); min-height: 100%; }
 body { font-family: 'Archivo', system-ui, sans-serif; }
 header { padding: 1.5rem 1rem 1rem; text-align: center; }
-header a { color: #a89a86; font-size: 0.8rem; text-decoration: none; }
-header a:hover { color: #d4a373; }
+header a { color: var(--text-dim); font-size: 0.8rem; text-decoration: none; }
+header a:hover { color: var(--accent); }
 header h1 { font-family: 'Fraunces', serif; font-weight: 600; font-size: clamp(1.4rem, 5vw, 2rem); margin-top: 0.4rem; }
-header p { margin-top: 0.4rem; font-size: 0.8rem; color: #a89a86; }
+header p { margin-top: 0.4rem; font-size: 0.8rem; color: var(--text-dim); }
 .wall-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -1451,6 +1473,112 @@ const QUOTES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The site's colour-theme control: a three-position icon slider (auto / dark / light) pinned
+/// to the homepage's top-right corner. Only the homepage carries it — the wall and game pages
+/// just apply whatever it saved, via `xtask::theme_init_script` (the cookie is `path=/`).
+///
+/// Native radio inputs underneath, so arrow-key navigation, focus and the checked state come
+/// from the browser; the sliding thumb follows `:has(:checked)`, no JS layout. The only JS is
+/// syncing the initial checked radio from `data-theme-pref` and saving a change.
+const THEME_SWITCH_CSS: &str = r#"
+.theme-switch {
+  position: absolute;
+  top: 0.9rem;
+  right: 0.9rem;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: repeat(3, 2rem);
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+}
+.theme-switch input { position: absolute; opacity: 0; pointer-events: none; }
+.theme-switch label {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 999px;
+  transition: color 0.2s;
+}
+.theme-switch label:hover { color: var(--accent); }
+.theme-switch svg { width: 15px; height: 15px; }
+.theme-switch input:checked + label { color: var(--accent); }
+.theme-switch input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: -2px; }
+.theme-switch .thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(2rem - 4px);
+  height: calc(2rem - 6px);
+  border-radius: 999px;
+  background: var(--border);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.theme-switch:has(#theme-dark:checked) .thumb { transform: translateX(2rem); }
+.theme-switch:has(#theme-light:checked) .thumb { transform: translateX(4rem); }
+.theme-switch .sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) { .theme-switch .thumb { transition: none; } }
+"#;
+
+const THEME_SWITCH_SCRIPT: &str = "
+(function() {
+  var pref = document.documentElement.getAttribute('data-theme-pref') || 'auto';
+  var inputs = document.querySelectorAll('.theme-switch input');
+  inputs.forEach(function(input) {
+    input.checked = input.value === pref;
+    input.addEventListener('change', function() {
+      if (input.checked && window.__hcgSetTheme) window.__hcgSetTheme(input.value);
+    });
+  });
+})();
+";
+
+fn theme_switch() -> Markup {
+    // (value, accessible name, SVG body) — 24x24 viewBox, stroked in currentColor.
+    let options = [
+        (
+            "auto",
+            "Auto theme (follow system)",
+            r#"<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/>"#,
+        ),
+        (
+            "dark",
+            "Dark theme",
+            r#"<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/>"#,
+        ),
+        (
+            "light",
+            "Light theme",
+            r#"<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/>"#,
+        ),
+    ];
+    html! {
+        style { (PreEscaped(THEME_SWITCH_CSS)) }
+        fieldset class="theme-switch" role="radiogroup" aria-label="Color theme" {
+            span class="thumb" aria-hidden="true" {}
+            @for (value, label, svg) in options {
+                input type="radio" name="theme" id=(format!("theme-{value}")) value=(value)
+                    checked[value == "auto"];
+                label for=(format!("theme-{value}")) title=(label) {
+                    svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" {
+                        (PreEscaped(svg))
+                    }
+                    span class="sr-only" { (label) }
+                }
+            }
+        }
+        script { (PreEscaped(minify_js(THEME_SWITCH_SCRIPT))) }
+    }
+}
+
 fn main() {
     let dist = Path::new("dist");
     let base_url = base_url();
@@ -1505,6 +1633,7 @@ fn main() {
                 (homepage_json_ld(&base_url, dist, SITE_DESCRIPTION))
                 (gtag_head())
                 (pwa_head("#171310"))
+                (theme_init_script())
                 link rel="preconnect" href="https://fonts.googleapis.com";
                 link rel="preconnect" href="https://fonts.gstatic.com" crossorigin;
                 // Loaded async (classic loadCSS pattern): a plain `<link rel=stylesheet>`
@@ -1521,6 +1650,7 @@ fn main() {
                 style { (PreEscaped(STYLE)) }
             }
             body {
+                (theme_switch())
                 header class="fade-up" {
                     h1 { "Hotel Chair Games" }
                     p class="kicker" { "The bed is taken. Sit anyway." }
@@ -1625,6 +1755,7 @@ fn main() {
                 meta name="twitter:image" content=(og.url);
                 (wall_json_ld(&base_url, &wall_items))
                 (gtag_head())
+                (theme_init_script())
                 style { (PreEscaped(WALL_STYLE)) }
             }
             body {

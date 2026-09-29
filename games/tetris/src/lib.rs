@@ -644,7 +644,8 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
     // would be exhausting rather than "typical". See games/tetris/src/sound.rs.
     let sfx = sound::Sfx::load(FLASH_DUR).await;
     if !capturing {
-        sfx.intro.play_once(0.6);
+        // Queued, not dropped, while the page waits for its first tap (autoplay).
+        sfx.intro.play_once_queued(0.6);
     }
 
     // Every `View::advance` call commits a piece to fall — playing `drop` right here,

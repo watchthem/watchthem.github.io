@@ -2,12 +2,13 @@
 use maud::{DOCTYPE, html};
 use std::path::Path;
 use xtask::{
-    analytics_bridge, audio_context_capture_script, audio_mute_bridge, base_url,
-    daily_challenge_button, daily_mode_query_bridge, description, favicon_links, fullscreen_bridge,
-    game_id_bridge, game_json_ld, game_page_info, gtag_head, hotkey_popup, loading_screen,
-    manifest_json, native_size, native_size_style, orientation_hint, popup_pause_bridge, pwa_head,
-    screenshot_bridge, scroll_cue, session_signals_bridge, share_result_bridge, social_image,
-    social_video, stream_mode_query_bridge, sw_register_bridge, title, variant_query_bridge,
+    analytics_bridge, audio_bridge, audio_context_capture_script, base_url, daily_challenge_button,
+    daily_mode_query_bridge, description, favicon_links, fullscreen_bridge, game_id_bridge,
+    game_json_ld, game_page_info, gtag_head, hotkey_popup, loading_screen, loading_screen_bridge,
+    manifest_json, native_size, native_size_style, popup_pause_bridge, pwa_head, screenshot_bridge,
+    scroll_cue, session_signals_bridge, share_result_bridge, social_image, social_video,
+    stream_mode_query_bridge, sw_register_bridge, theme_init_script, title, top_banners,
+    variant_query_bridge,
 };
 
 fn main() {
@@ -56,6 +57,7 @@ fn main() {
                 (game_json_ld(&base_url, &title, &description, &page_url, &og.url))
                 (gtag_head())
                 (pwa_head("#000000"))
+                (theme_init_script())
                 (native_size_style(&name))
             }
             body {
@@ -73,7 +75,8 @@ fn main() {
                 (audio_context_capture_script())
                 script src="../mq_js_bundle.js" {}
                 (analytics_bridge())
-                (audio_mute_bridge())
+                (audio_bridge())
+                (loading_screen_bridge())
                 (session_signals_bridge(&name))
                 (sw_register_bridge("../sw.js"))
                 (stream_mode_query_bridge())
@@ -92,7 +95,7 @@ fn main() {
                 (hotkey_popup(&name))
                 (daily_challenge_button())
                 (fullscreen_bridge())
-                (orientation_hint(&name))
+                (top_banners(&name))
             }
         }
     };

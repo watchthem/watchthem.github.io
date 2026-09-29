@@ -124,6 +124,18 @@ took the wall from 1 outbound link to 12. `wall_live_bridge`'s tile-click handle
 click inside an `<a>`, so tapping a label navigates while tapping the tile still mounts the
 live game.
 
+### Light/dark theme
+
+The homepage's top-right icon slider (auto/dark/light, `theme_switch` in `generate_index.rs`)
+saves the choice in the `hcg_theme` cookie (`path=/`; `auto` = no cookie, follow
+`prefers-color-scheme`). The wall and game pages have no switch of their own — they just
+apply the cookie. Dark is the original palette, unchanged. `xtask::theme_init_script`
+runs synchronously in `<head>` and resolves the preference to a concrete
+`data-theme="light"|"dark"` on `<html>`, so each page's CSS is colour variables plus one
+`:root[data-theme="light"]` override block. New page-level colours should be variables with a
+light value, not hard-coded. A game page's `.stage` deliberately stays black in both themes
+(every game canvas is dark); only the page around and below it switches.
+
 ### PWA / installable
 
 Every generated page — the homepage and each game — is independently installable as its
@@ -429,6 +441,10 @@ for adding a new hotkey (both popups need updating or one will lie). Draw
 `control.label()` somewhere in the game's own header, near score/level — see any game's
 `lib.rs` for the pattern.
 
+Screenshot/clip captures (`HCG_SCREENSHOT`, `HCG_CLIP_FIFO`) are always silent:
+`audio::playback::muted()` also returns true whenever `screenshot::is_capturing()`, so no
+game needs its own capture-mute.
+
 Call `control.episode_complete(game_name, score)` at the point each game resets for a new
 round — see `lib/control/CLAUDE.md`'s "Analytics" section.
 
@@ -450,7 +466,10 @@ pins the canvas to that native resolution and fits it to the viewport via CSS
 `transform: scale(...)`, not by stretching to `100vw`/`100vh` — stretching would make the
 canvas's actual backing resolution equal to the raw viewport and crop anything past the
 smaller of width/height. Don't reintroduce `width: 100vw; height: 100vh;` on `canvas`
-without also making every game's drawing code scale-aware. The fit-to-viewport scale is
+without also making every game's drawing code scale-aware. The one exception is
+browser fullscreen for a game listed in `xtask::fills_fullscreen` (labyrinth, which lays
+itself out from `screen_width()`/`screen_height()`): `fitCanvas` grows the canvas box to the
+screen's aspect at the same fit scale instead of letterboxing it. The fit-to-viewport scale is
 capped per-game (`xtask::max_fit_scale`, 1.5 for the 900×720 games, 1.0 — i.e. never
 upscaled past native resolution — for game2048) since a single cap that isn't quite low
 still leaves a portrait canvas filling ~85-90% of a typical desktop viewport's height
@@ -463,7 +482,12 @@ game2048 looking oversized and pixelated on a 3200×2000 2x-scaled monitor.
 
 ## WASM caveats
 
-- `std::time::SystemTime::now()` **panics on WASM** — use `macroquad::miniquad::date::now() as u64` for timestamps/seeds.
+- `std::time::SystemTime::now()` and `Instant::now()` **panic on WASM** ("unreachable
+  executed" in the browser) — use `macroquad::miniquad::date::now()` for timestamps/seeds.
+  `clippy.toml` bans both (`disallowed-methods`), so `mise run check` catches them; native-only
+  timing (benches, cfg-gated diagnostics, ignored timing tests) opts out with
+  `#[allow(clippy::disallowed_methods)]`. Temporary profiling code crashed the labyrinth page
+  twice before this lint existed.
 - No filesystem access in WASM — avoid `std::fs`. `screenshot::handle_hotkey`'s `S`
   capture writes straight to a file on native for this reason; on WASM it reads pixels
   via `get_screen_data()` (synchronous, inside the same Rust frame) and hands the raw

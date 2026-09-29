@@ -102,6 +102,14 @@ fn max_fit_scale(name: &str) -> f64 {
     }
 }
 
+/// Games that lay themselves out from `screen_width()`/`screen_height()` rather than fixed
+/// coordinates (labyrinth's raycaster widens its view, its HUD and minimap anchor to the
+/// edges), so in browser fullscreen `native_size_style` can grow the canvas to the
+/// screen's aspect instead of letterboxing it.
+fn fills_fullscreen(name: &str) -> bool {
+    name == "labyrinth"
+}
+
 /// CSS + JS that pins the canvas to its native design resolution (so games drawing at
 /// absolute pixel coordinates render correctly) and scales it uniformly to fit the
 /// viewport via `transform: scale`, letterboxed and centered. A CSS transform doesn't
@@ -127,14 +135,15 @@ fn max_fit_scale(name: &str) -> f64 {
 pub fn native_size_style(name: &str) -> Markup {
     let (w, h) = native_size(name);
     let max_scale = max_fit_scale(name);
+    let fill = fills_fullscreen(name);
     html! {
         style {
             (PreEscaped(format!(
                 "* {{ margin: 0; padding: 0; box-sizing: border-box; }}\n\
-                 html {{ background: #000; overflow-x: hidden; }}\n\
-                 body {{ background: #000; }}\n\
-                 html.stream-mode, html.stream-mode body {{ background: transparent; }}\n\
-                 .stage {{ position: relative; height: 100vh; height: 100dvh; overflow: hidden; \
+                 html {{ background: var(--page-bg); overflow-x: hidden; }}\n\
+                 body {{ background: var(--page-bg); }}\n\
+                 html.stream-mode, html.stream-mode body, html.stream-mode .stage {{ background: transparent; }}\n\
+                 .stage {{ position: relative; height: 100vh; height: 100dvh; overflow: hidden; background: #000; \
                  display: flex; align-items: center; justify-content: center; }}\n\
                  main {{ display: grid; }}\n\
                  canvas, .loading {{ grid-area: 1 / 1; width: {w}px; height: {h}px; transform-origin: center; }}\n\
@@ -154,10 +163,25 @@ pub fn native_size_style(name: &str) -> Markup {
         script {
             (PreEscaped(minify_js(&format!(
                 "window.fitCanvas = function() {{\n\
-                 \x20 const k = Math.min(window.innerWidth / {w}, window.innerHeight / {h}, {max_scale});\n\
+                 \x20 const vw = window.innerWidth, vh = window.innerHeight;\n\
+                 \x20 const k = Math.min(vw / {w}, vh / {h}, {max_scale});\n\
                  \x20 document.querySelectorAll('canvas, .loading').forEach(function(el) {{\n\
                  \x20   el.style.transform = `scale(${{k}})`;\n\
                  \x20 }});\n\
+                 \x20 // Layout-aware games fill the screen in fullscreen: the canvas box grows\n\
+                 \x20 // to the viewport's aspect at the same scale, so the HUD keeps its size.\n\
+                 \x20 if ({fill}) {{\n\
+                 \x20   const c = document.getElementById('glcanvas');\n\
+                 \x20   const full = !!(document.fullscreenElement || document.webkitFullscreenElement);\n\
+                 \x20   const cw = full ? Math.round(vw / k) : {w}, ch = full ? Math.round(vh / k) : {h};\n\
+                 \x20   if (c.clientWidth !== cw || c.clientHeight !== ch) {{\n\
+                 \x20     c.style.width = cw + 'px';\n\
+                 \x20     c.style.height = ch + 'px';\n\
+                 \x20     // mq_js_bundle's own resize handler may already have run for this\n\
+                 \x20     // event with the old box; let it sync the backing size again.\n\
+                 \x20     if (typeof window.onresize === 'function') window.onresize();\n\
+                 \x20   }}\n\
+                 \x20 }}\n\
                  }};\n\
                  window.addEventListener('resize', window.fitCanvas);\n\
                  document.addEventListener('DOMContentLoaded', window.fitCanvas);"
@@ -210,6 +234,45 @@ fn mode_class_script() -> Markup {
     }
 }
 
+/// Site-wide colour theme: `auto` (follow `prefers-color-scheme`, the default), `dark` or
+/// `light`, chosen with the homepage's switch (`generate_index`) and remembered in the `hcg_theme` cookie (`path=/`,
+/// so one choice covers the homepage, the wall and every game; `auto` deletes it).
+///
+/// Resolves the preference to a concrete `data-theme="light"|"dark"` on `<html>`, so each
+/// page's CSS needs only one `:root[data-theme="light"]` override block rather than a
+/// second copy under a media query. Synchronous in `<head>` so the right theme is there
+/// before first paint; without JS the attribute never appears and pages stay dark, as
+/// before. Under `auto` it also follows a live OS theme change. `window.__hcgSetTheme` is
+/// the cross-script entry point that switch calls (see CLAUDE.md on minified blocks).
+pub fn theme_init_script() -> Markup {
+    html! {
+        script {
+            (PreEscaped(minify_js(
+                "(function() {\n\
+                 \x20 var m = document.cookie.match(/(?:^|; )hcg_theme=(light|dark)(?:;|$)/);\n\
+                 \x20 var pref = m ? m[1] : 'auto';\n\
+                 \x20 var mq = window.matchMedia('(prefers-color-scheme: light)');\n\
+                 \x20 var root = document.documentElement;\n\
+                 \x20 function apply() {\n\
+                 \x20   root.setAttribute('data-theme', pref === 'auto' ? (mq.matches ? 'light' : 'dark') : pref);\n\
+                 \x20   root.setAttribute('data-theme-pref', pref);\n\
+                 \x20 }\n\
+                 \x20 apply();\n\
+                 \x20 var onChange = function() { if (pref === 'auto') apply(); };\n\
+                 \x20 if (mq.addEventListener) mq.addEventListener('change', onChange);\n\
+                 \x20 else if (mq.addListener) mq.addListener(onChange);\n\
+                 \x20 window.__hcgSetTheme = function(p) {\n\
+                 \x20   pref = p;\n\
+                 \x20   document.cookie = 'hcg_theme=' + p + '; path=/; SameSite=Lax; max-age=' +\n\
+                 \x20     (p === 'auto' ? 0 : 31536000);\n\
+                 \x20   apply();\n\
+                 \x20 };\n\
+                 })();"
+            )))
+        }
+    }
+}
+
 /// Sarcastic one-liner shown behind the canvas while the WASM module fetches/inits.
 /// Same "watch, don't judge" tone as the homepage quotes. Sits in the same CSS grid
 /// cell as the canvas (see `native_size_style`) so once the game starts clearing the
@@ -237,6 +300,8 @@ const LOADING_LINES: &[&str] = &[
 ];
 
 pub fn loading_screen() -> Markup {
+    // Build-time page generation, native only: wall-clock is fine here.
+    #[allow(clippy::disallowed_methods)]
     let idx = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos() as usize)
@@ -244,6 +309,32 @@ pub fn loading_screen() -> Markup {
         % LOADING_LINES.len();
     html! {
         div class="loading" { (LOADING_LINES[idx]) }
+    }
+}
+
+/// Hides `loading_screen`'s line once the wasm is running. Covering it with the canvas
+/// isn't enough: a game that draws translucent shapes (fog, glows) lowers the canvas's own
+/// alpha there, since the default blend applies to the alpha channel too, and the line
+/// shows through the running game. The page is black under it anyway, so nothing else
+/// changes. Waits 250ms after `on_init` (which runs just before the wasm's `main`), so the
+/// line stays up until the canvas's `reveal-canvas` delay has passed and the game has
+/// drawn its first frames. Must run after `mq_js_bundle.js` but before `load(...)`.
+pub fn loading_screen_bridge() -> Markup {
+    html! {
+        script {
+            (PreEscaped(minify_js(
+                "miniquad_add_plugin({\n\
+                 \x20 on_init: function() {\n\
+                 \x20   setTimeout(function() {\n\
+                 \x20     var el = document.querySelector('.loading');\n\
+                 \x20     if (el) el.style.visibility = 'hidden';\n\
+                 \x20   }, 250);\n\
+                 \x20 },\n\
+                 \x20 version: 1,\n\
+                 \x20 name: \"hcg_loading_screen\"\n\
+                 });"
+            )))
+        }
     }
 }
 
@@ -369,8 +460,7 @@ pub fn orientation_hint(name: &str) -> Markup {
     html! {
         style {
             (PreEscaped(
-                "#rotate-hint { display: none; position: fixed; top: 0; left: 0; right: 0; \
-                 z-index: 12; background: rgba(20,20,24,0.92); color: #fff; \
+                "#rotate-hint { display: none; background: rgba(20,20,24,0.92); color: #fff; \
                  font: 14px system-ui, sans-serif; padding: 10px 16px; \
                  align-items: center; justify-content: center; gap: 12px; text-align: center; }\n\
                  #rotate-hint.show { display: flex; }\n\
@@ -415,29 +505,73 @@ pub fn orientation_hint(name: &str) -> Markup {
     }
 }
 
+/// Fixed strip across the top of a game page holding its dismissible notices — the
+/// rotate-device hint and the "sound is off" hint (shown by `audio_bridge`'s
+/// `hcg_audio_running`). A flex column, so when both are showing they stack instead of
+/// one covering the other. Placed after `load(...)`: `audio_bridge` looks `#sound-hint`
+/// up at call time, well after the wasm fetch lets parsing reach it.
+pub fn top_banners(name: &str) -> Markup {
+    html! {
+        style {
+            (PreEscaped(
+                "#top-banners { position: fixed; top: 0; left: 0; right: 0; z-index: 12; \
+                 display: flex; flex-direction: column; }\n\
+                 #sound-hint { display: none; background: rgba(20,20,24,0.92); color: #fff; \
+                 font: 14px system-ui, sans-serif; padding: 10px 16px; text-align: center; \
+                 cursor: pointer; }\n\
+                 #sound-hint.show { display: block; }\n\
+                 #sound-hint small { display: block; opacity: 0.7; font-size: 12px; margin-top: 2px; }"
+            ))
+        }
+        div id="top-banners" {
+            div id="sound-hint" {
+                "🔇 Sound is off until you tap or press a key"
+                small { "Allow autoplay for this site in your browser's settings to skip this." }
+            }
+            (orientation_hint(name))
+        }
+    }
+}
+
+/// Game-page palette. Only the page *around* the game follows `theme_init_script`'s light
+/// theme: `.stage` stays black in both (every game draws a dark canvas, and the scroll cue
+/// and loading line inside it are tuned for that), while the below-fold `.page-info`
+/// section and the page background switch. The fixed overlay buttons float over both the
+/// black stage and, once scrolled, the light section — so under light they turn dark
+/// translucent instead of white translucent, which reads on either background.
 const PAGE_INFO_CSS: &str = "\
+:root { --page-bg: #000; --pi-text: #a89a86; --pi-accent: #d4a373; --pi-heading: #f0ece2; \
+--pi-card-text: #e7ddcd; --pi-border: rgba(212,163,115,0.18); --pi-border-hi: rgba(212,163,115,0.5); \
+--pi-card-bg: rgba(255,255,255,0.02); }\n\
+:root[data-theme=\"light\"] { color-scheme: light; --page-bg: #f5efe4; --pi-text: #5e4e3b; \
+--pi-accent: #9a5b22; --pi-heading: #2c2015; --pi-card-text: #3a2d1f; \
+--pi-border: rgba(154,91,34,0.22); --pi-border-hi: rgba(154,91,34,0.6); --pi-card-bg: #fffaf2; }\n\
+:root[data-theme=\"light\"] #hotkeys-btn, :root[data-theme=\"light\"] #daily-btn, \
+:root[data-theme=\"light\"] #share-btn { background: rgba(20,16,12,0.55); }\n\
+:root[data-theme=\"light\"] #hotkeys-btn:hover, :root[data-theme=\"light\"] #daily-btn:hover, \
+:root[data-theme=\"light\"] #share-btn:hover { background: rgba(20,16,12,0.72); }\n\
 .scroll-cue { position: absolute; bottom: 10px; left: 0; right: 0; z-index: 9; \
 text-align: center; color: rgba(255,255,255,0.28); font: 20px system-ui, sans-serif; \
 line-height: 1; pointer-events: none; transition: opacity 0.3s; }\n\
 .scroll-cue.gone { opacity: 0; }\n\
 .page-info { max-width: 760px; margin: 0 auto; padding: 3.5rem 1.5rem 4.5rem; \
-font-family: system-ui, sans-serif; color: #a89a86; }\n\
+font-family: system-ui, sans-serif; color: var(--pi-text); }\n\
 .page-info .home-link { display: inline-block; margin-bottom: 1.2rem; font-size: 0.8rem; \
-color: #d4a373; text-decoration: none; }\n\
+color: var(--pi-accent); text-decoration: none; }\n\
 .page-info .home-link:hover { text-decoration: underline; }\n\
-.page-info h1 { font-size: clamp(1.3rem, 5vw, 1.7rem); font-weight: 600; color: #f0ece2; \
+.page-info h1 { font-size: clamp(1.3rem, 5vw, 1.7rem); font-weight: 600; color: var(--pi-heading); \
 margin-bottom: 0.9rem; }\n\
 .page-info p { font-size: 0.95rem; line-height: 1.7; margin-bottom: 0.9rem; }\n\
-.page-info p a { color: #d4a373; }\n\
+.page-info p a { color: var(--pi-accent); }\n\
 .page-info h2 { font-size: 0.7rem; letter-spacing: 0.14em; text-transform: uppercase; \
-color: #d4a373; margin: 2.75rem 0 1.1rem; }\n\
+color: var(--pi-accent); margin: 2.75rem 0 1.1rem; }\n\
 .related { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); \
 gap: 1rem; }\n\
-.related a { display: block; text-decoration: none; border: 1px solid rgba(212,163,115,0.18); \
-border-radius: 10px; overflow: hidden; background: rgba(255,255,255,0.02); }\n\
-.related a:hover { border-color: rgba(212,163,115,0.5); }\n\
+.related a { display: block; text-decoration: none; border: 1px solid var(--pi-border); \
+border-radius: 10px; overflow: hidden; background: var(--pi-card-bg); }\n\
+.related a:hover { border-color: var(--pi-border-hi); }\n\
 .related img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }\n\
-.related span { display: block; padding: 0.6rem 0.7rem; font-size: 0.85rem; color: #e7ddcd; }";
+.related span { display: block; padding: 0.6rem 0.7rem; font-size: 0.85rem; color: var(--pi-card-text); }";
 
 /// Every game in the workspace, by directory name, sorted the same way the homepage's
 /// grid sorts (by display `title`). Read from `games/` in the source tree rather than from
@@ -1355,7 +1489,7 @@ pub fn fullscreen_bridge() -> Markup {
 /// (rather than caching a reference before this runs) is what every real caller does, so
 /// wrapping the global is enough regardless of exactly when quad-snd constructs its
 /// context. Harmless if no `AudioContext` constructor exists at all (very old browsers) —
-/// the wrapper just never gets installed, and `audio_mute_bridge`'s bridge below already
+/// the wrapper just never gets installed, and `audio_bridge` below already
 /// no-ops when `window.__hcgAudioCtx` never got set.
 pub fn audio_context_capture_script() -> Markup {
     html! {
@@ -1378,17 +1512,27 @@ pub fn audio_context_capture_script() -> Markup {
     }
 }
 
-/// `M` hotkey: registers a miniquad plugin exposing `env.hcg_set_audio_muted`, called
-/// from `control::Control::handle_keys` on every mute toggle. Suspends/resumes (not
-/// closes — `AudioContext.close()` is one-way, and quad-snd has no way to be told to
-/// build a fresh one) the context `audio_context_capture_script` captured, which is the
-/// standard Web Audio mechanism for releasing the audio hardware while a page isn't
-/// using it — e.g. so a connected Bluetooth headset isn't held routed to a muted,
-/// silent tab. A no-op (both directions) when `window.__hcgAudioCtx` was never
-/// captured — nothing has played a sound yet, so there's no hardware to release.
-/// Must run after `mq_js_bundle.js` but before `load(...)`, same ordering constraint as
-/// `analytics_bridge`.
-pub fn audio_mute_bridge() -> Markup {
+/// Registers a miniquad plugin with the page's two audio hooks, both reading the context
+/// `audio_context_capture_script` captured:
+///
+/// - `env.hcg_set_audio_muted` — the `M` hotkey, called from `control::Control::handle_keys`
+///   on every mute toggle. Suspends/resumes (not closes — `AudioContext.close()` is
+///   one-way, and quad-snd has no way to be told to build a fresh one) the context, the
+///   standard Web Audio mechanism for releasing the audio hardware while a page isn't
+///   using it — e.g. so a connected Bluetooth headset isn't held routed to a muted,
+///   silent tab. A no-op (both directions) when no context was ever captured.
+/// - `env.hcg_audio_running` — polled by `audio::Clip` before each play. Browsers hold a
+///   new `AudioContext` suspended until the page gets a click/tap/key press, and no API
+///   can ask the visitor for permission instead. While it's suspended this returns 0 and
+///   shows `top_banners`' `#sound-hint` (only on pages whose game actually tries to make a sound); the
+///   banner hides itself when the context starts running. quad-snd's own bundle already
+///   resumes the context on any `mousedown`/`keydown`/`touch*` anywhere on the document,
+///   so the banner needs no click handler of its own.
+///
+/// Hidden under `?embed=1`/`?stream=1` like the rest of the chrome (those modes mute
+/// audio anyway, so the hook is never reached). Must run after `mq_js_bundle.js` but
+/// before `load(...)`, same ordering constraint as `analytics_bridge`.
+pub fn audio_bridge() -> Markup {
     html! {
         script {
             (PreEscaped(minify_js(
@@ -1400,9 +1544,24 @@ pub fn audio_mute_bridge() -> Markup {
                  \x20     if (muted) ctx.suspend().catch(function() {});\n\
                  \x20     else ctx.resume().catch(function() {});\n\
                  \x20   };\n\
+                 \x20   var hintWired = false;\n\
+                 \x20   importObject.env.hcg_audio_running = function() {\n\
+                 \x20     var ctx = window.__hcgAudioCtx;\n\
+                 \x20     // No Web Audio at all: nothing will ever play, so nothing to nag about.\n\
+                 \x20     if (!ctx || ctx.state === 'running') return 1;\n\
+                 \x20     var hint = document.getElementById('sound-hint');\n\
+                 \x20     if (!window.__hcgHide && hint && !hintWired) {\n\
+                 \x20       hintWired = true;\n\
+                 \x20       hint.classList.add('show');\n\
+                 \x20       ctx.addEventListener('statechange', function() {\n\
+                 \x20         if (ctx.state === 'running') hint.classList.remove('show');\n\
+                 \x20       });\n\
+                 \x20     }\n\
+                 \x20     return 0;\n\
+                 \x20   };\n\
                  \x20 },\n\
                  \x20 version: 1,\n\
-                 \x20 name: \"hcg_audio_mute\"\n\
+                 \x20 name: \"hcg_audio\"\n\
                  });"
             )))
         }

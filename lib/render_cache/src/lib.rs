@@ -26,6 +26,7 @@ pub struct RenderCache {
     dirty: bool,
     backdrop: Color,
     supersample: u32,
+    opacity: f32,
 }
 
 impl RenderCache {
@@ -78,6 +79,7 @@ impl RenderCache {
             dirty: true,
             backdrop: Color::new(0.0, 0.0, 0.0, 0.0),
             supersample: 1,
+            opacity: 1.0,
         }
     }
 
@@ -149,6 +151,14 @@ impl RenderCache {
         let (target, camera) = Self::build(self.rect, self.supersample);
         self.target = target;
         self.camera = camera;
+        self
+    }
+
+    /// Blits the cached texture at `opacity` (0..=1) instead of fully opaque, so what's
+    /// drawn underneath shows through the whole region — e.g. an overlay panel over a
+    /// live scene. Applied only at blit time; the closure draws as usual.
+    pub fn with_opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity.clamp(0.0, 1.0);
         self
     }
 
@@ -235,7 +245,7 @@ impl RenderCache {
             &self.target.texture,
             self.rect.x,
             self.rect.y,
-            WHITE,
+            Color::new(1.0, 1.0, 1.0, self.opacity),
             DrawTextureParams {
                 dest_size: Some(vec2(self.rect.w, self.rect.h)),
                 flip_y: true,

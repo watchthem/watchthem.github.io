@@ -8,3 +8,4 @@ edition = "2024"
 # it every macroquad::audio call silently no-ops with a "feature disabled" warning.
 macroquad = { version = "0.4", features = ["audio"] }
 hound = "3"
+screenshot = { path = "../screenshot" }

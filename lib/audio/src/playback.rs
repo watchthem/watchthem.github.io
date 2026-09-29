@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// together, and nothing here tracks in-flight `Clip`s to reach into, so this can't
 /// retroactively silence an already-playing looped clip on native — on WASM, muting
 /// additionally suspends the browser's `AudioContext` (see `control::Control` /
-/// `xtask::audio_mute_bridge`), which *does* immediately silence everything already
+/// `xtask::audio_bridge`), which *does* immediately silence everything already
 /// playing, at the hardware level.
 static MUTED: AtomicBool = AtomicBool::new(false);
 
@@ -21,8 +21,34 @@ pub fn set_muted(muted: bool) {
     MUTED.store(muted, Ordering::Relaxed);
 }
 
+/// Also true for the whole run of a screenshot/clip capture (`screenshot::is_capturing`):
+/// those are automated headless runs — build steps, CI — that must never make a sound,
+/// whatever game is being captured. Checked here, at the one gate every clip plays
+/// through, so no game has to remember to mute itself.
 pub fn muted() -> bool {
-    MUTED.load(Ordering::Relaxed)
+    static CAPTURING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    MUTED.load(Ordering::Relaxed) || *CAPTURING.get_or_init(screenshot::is_capturing)
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe extern "C" {
+    /// `xtask::audio_bridge`: 1 when the browser's `AudioContext` is running, 0
+    /// while autoplay policy still holds it suspended (and then shows the page's
+    /// "sound is off" banner).
+    fn hcg_audio_running() -> i32;
+}
+
+/// False on WASM until the page has had the user gesture browsers require before audio
+/// may start. A one-shot played before that isn't dropped by the browser: its
+/// `start(0)` is queued against a frozen clock, and the first tap would then fire every
+/// footstep/line-clear since page load at once. Always true on native.
+fn backend_running() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    unsafe {
+        hcg_audio_running() != 0
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    true
 }
 
 /// A loaded, playable synthesized clip.
@@ -41,8 +67,10 @@ impl Clip {
         Clip(sound)
     }
 
+    /// Skipped while the browser still blocks audio (see `backend_running`), so sound
+    /// picks up from the current game state once it's unblocked.
     pub fn play_once(&self, volume: f32) {
-        if muted() {
+        if muted() || !backend_running() {
             return;
         }
         audio::play_sound(
@@ -54,10 +82,33 @@ impl Clip {
         );
     }
 
+    /// Like `play_once`, but *not* skipped while the browser still blocks audio: the
+    /// clip is queued and starts with the first gesture. For a one-off that should still
+    /// be heard late rather than never — a game's opening jingle (tetris's intro) —
+    /// never for per-event sounds, which would all pile up and fire at once.
+    pub fn play_once_queued(&self, volume: f32) {
+        if muted() {
+            return;
+        }
+        backend_running();
+        audio::play_sound(
+            &self.0,
+            PlaySoundParams {
+                looped: false,
+                volume,
+            },
+        );
+    }
+
+    /// Not gated on `backend_running`: a bed started while audio is blocked just stays
+    /// queued and begins with the first gesture, which is what an ambience should do —
+    /// games start their loops once, not every frame. The call still reveals the page's
+    /// "sound is off" banner.
     pub fn play_looped(&self, volume: f32) {
         if muted() {
             return;
         }
+        backend_running();
         audio::play_sound(
             &self.0,
             PlaySoundParams {

@@ -120,12 +120,15 @@ fn main() {
         n
     );
 
+    // Native-only bench binary: wall-clock is fine here.
+    #[allow(clippy::disallowed_methods)]
     let seed_base = seed_arg.unwrap_or_else(|| {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(42, |d| d.as_nanos() as u64)
     });
 
+    #[allow(clippy::disallowed_methods)]
     let t0 = Instant::now();
     let mut results: Vec<GameResult> = Vec::with_capacity(n);
     for i in 0..n {
