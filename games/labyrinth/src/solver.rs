@@ -5,12 +5,13 @@
 //! Strategy, in order:
 //! 1. Exit seen and reachable over believed-open, non-pruned edges → head straight for
 //!    it (BFS shortest known path).
-//! 2. Nearest frontier (a cell with a believed-open way in and an unexplored edge),
-//!    same BFS. Tremaux visit counts break equal-length ties so the bot spreads out.
-//! 3. Dungeon: nothing reachable, but a spotted key we don't hold → go collect it; the
-//!    lock it opens then unblocks a frontier.
-//! 4. Fog (`wander`): the decaying map left no frontier — step toward the stalest
-//!    neighbour, i.e. back into the part of the map that's gone blank.
+//! 2. Dungeon: a spotted key we don't hold → collect it now, while it's in view.
+//! 3. Nearest frontier (a cell with a believed-open way in and an unexplored edge) or
+//!    unopened office door, same BFS. Tremaux visit counts break equal-length ties so
+//!    the bot spreads out.
+//! 4. Fog (`wander`): no frontier and no exit in memory (rare — forgetting normally
+//!    keeps making new frontiers) — head for the stalest remembered cell, the ground
+//!    closest to being forgotten and dissolved.
 //!
 //! Otherwise `None` → the episode ends `Stuck`.
 
@@ -32,42 +33,65 @@ impl Solver {
     pub fn choose_move(&mut self, k: &Knowledge, wander: bool) -> Option<usize> {
         // 1. Make for the exit if we've seen it and can get there.
         if let Some(exit) = k.exit_seen
+            && !k.exit_locked
             && let Some(dir) = self.first_step_toward(k, |c| c == exit)
         {
             return Some(dir);
         }
-        // 2. The nearest unexplored frontier.
-        if let Some(dir) = self.first_step_toward(k, |c| k.is_frontier(c)) {
+        // 2. A key we've spotted and don't hold: pick it up now, while it's in view —
+        //    walking past it only to come back once a lock stops us wasted the walk
+        //    (and looked absent-minded).
+        let keyset: Vec<crate::maze::Cell> = k
+            .keys_seen
+            .iter()
+            .filter(|&&(_, kk)| k.keys_held & (1 << kk) == 0)
+            .map(|&(c, _)| c)
+            .collect();
+        if !keyset.is_empty()
+            && let Some(dir) = self.first_step_toward(k, |c| keyset.contains(&c))
+        {
             return Some(dir);
         }
-        // 3. Nothing reachable — but if a lock is holding us back and we've spotted a
-        //    key we don't hold, go collect it, then the frontier opens up (Dungeon).
-        let need_key = !k.keys_seen.is_empty()
-            && k.keys_seen
-                .iter()
-                .any(|&(_, kk)| k.keys_held & (1 << kk) == 0);
-        if need_key {
-            let keyset: Vec<crate::maze::Cell> = k
-                .keys_seen
-                .iter()
-                .filter(|&&(_, kk)| k.keys_held & (1 << kk) == 0)
-                .map(|&(c, _)| c)
-                .collect();
-            if let Some(dir) = self.first_step_toward(k, |c| keyset.contains(&c)) {
-                return Some(dir);
-            }
+        // 3. The nearest unexplored frontier — or unopened office door: the bot looks
+        //    behind every door it knows of (`door_to_open` does the opening).
+        if let Some(dir) =
+            self.first_step_toward(k, |c| k.is_frontier(c) || k.marked_door(c).is_some())
+        {
+            return Some(dir);
+        }
+        //    Nothing else left: an unmarked door after all.
+        if let Some(dir) = self.first_step_toward(k, |c| k.plain_door(c).is_some()) {
+            return Some(dir);
         }
 
-        // 4. Fog: the map decayed out from under the bot and there's no frontier to
-        //    aim at. Wander toward the stalest neighbour — that's where the map has
-        //    gone blank and needs re-walking.
+        // 4. Fog: nothing to aim at. Head for the stalest remembered cell — a real
+        //    destination, not "the stalest neighbour", which is always one the bot can
+        //    see right now and so just as fresh as the other: that version ping-ponged
+        //    between two cells until the step cap.
         if wander {
-            return k
-                .open_neighbors(k.pos)
-                .max_by_key(|(_, nb)| k.age(*nb))
-                .map(|(d, _)| d);
+            let stalest = (0..k.w * k.h)
+                .map(|i| Cell {
+                    x: (i % k.w) as i32,
+                    y: (i / k.w) as i32,
+                })
+                .filter(|&c| c != k.pos && k.cell_seen(c) && !k.pruned[k.idx(c)])
+                .max_by_key(|&c| k.age(c))?;
+            return self.first_step_toward(k, |c| c == stalest);
         }
         None
+    }
+
+    /// Standing by a shut office door: open it (from the doorway) before anything else
+    /// — an unmarked one only when there's nothing else left to explore.
+    pub fn door_to_open(&self, k: &Knowledge) -> Option<usize> {
+        k.marked_door(k.pos).or_else(|| {
+            let d = k.plain_door(k.pos)?;
+            let elsewhere = (k.exit_seen.is_some() && !k.exit_locked)
+                || self
+                    .first_step_toward(k, |c| k.is_frontier(c) || k.marked_door(c).is_some())
+                    .is_some();
+            (!elsewhere).then_some(d)
+        })
     }
 
     /// BFS from the bot over known-open, non-pruned edges to the nearest cell matching
@@ -103,6 +127,10 @@ impl Solver {
                 // Can't route *through* a pruned cell, but the goal itself (a frontier
                 // or the exit) is never pruned, so it stays reachable.
                 if k.pruned[j] && !goal(nb) {
+                    continue;
+                }
+                // A locked lift is a dead end with nothing in it.
+                if k.exit_locked && k.exit_seen == Some(nb) {
                     continue;
                 }
                 let cost = base.saturating_add(k.visits(nb) as u32);

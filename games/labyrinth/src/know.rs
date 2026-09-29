@@ -5,7 +5,8 @@
 //! `Game` owns the per-tick visibility feed (`reveal`) — the one place `Maze` and
 //! `Knowledge` meet.
 
-use crate::maze::{Cell, EdgeKind, Maze, opposite};
+use crate::maze::{Cell, DIRS, EdgeKind, Maze, WallGrid, opposite};
+use macroquad::math::vec2;
 
 /// Per-cell edge state. `known`/`open` are bitmasks over the 4 dirs; `mirror`/`locked`/
 /// `phantom` flag special edges; `key[d]` holds the key id for a `locked` edge.
@@ -20,6 +21,15 @@ struct Edges {
     /// A mirror the bot has physically walked into — permanently known to be a wall, so
     /// re-revealing the cell doesn't fool it a second time.
     busted: u8,
+    /// Office doors (Tower mode): `door` one the bot can push open, `sealed` one that
+    /// never opens (also a wall — `open` is clear).
+    door: u8,
+    sealed: u8,
+    /// An openable office door that's still shut (the bot will open it to look in).
+    shut: u8,
+    /// ...and has no name plate: until it's opened, the bot treats it as a wall — a
+    /// last resort, tried only when there's nothing else left to explore.
+    plain: u8,
     key: [u8; 4],
 }
 
@@ -42,6 +52,9 @@ pub struct Knowledge {
     /// `Some(chebyshev distance)` when the exit is in the bot's current line of sight
     /// (recomputed every reveal) — drives the exit-glow effect.
     pub exit_sight: Option<i32>,
+    /// Tower: the lift won't take the bot until the boss is defeated — the exit is known
+    /// but not a destination (and not a cell to route through) while this is set.
+    pub exit_locked: bool,
     /// Bit `k` set => the bot holds key `k` (Dungeon mode).
     pub keys_held: u32,
     /// Keys spotted on the floor but not yet collected: `(cell, key id)`.
@@ -51,6 +64,26 @@ pub struct Knowledge {
     pub dirty: bool,
     /// Current tick (bumped by `Game` before each `reveal`).
     now: u32,
+}
+
+/// From `bot`'s cell centre, is cell `c`'s centre in sight through the doorway in
+/// direction `d` — through its `DOOR_OPENING`-wide gap (less a margin for the leaf and
+/// lining), past the walls as the camera draws them (`WallGrid::blocks`: thin slabs in
+/// the Tower)?
+fn sees_through_door(grid: &WallGrid, bot: Cell, d: usize, c: Cell) -> bool {
+    let centre = |c: Cell| {
+        let (gx, gy) = WallGrid::cell_center(c);
+        vec2(gx as f32 + 0.5, gy as f32 + 0.5)
+    };
+    let (eye, to) = (centre(bot), centre(c));
+    let v = to - eye;
+    let n = vec2(DIRS[d].0 as f32, DIRS[d].1 as f32);
+    // Beyond the doorway's middle (one unit out).
+    if v.dot(n) <= 1.0 {
+        return false;
+    }
+    let steps = ((v.x.abs() + v.y.abs()) / 0.02) as i32;
+    (1..steps).all(|i| !grid.blocks(eye + v * (i as f32 / steps as f32), 0.04))
 }
 
 impl Knowledge {
@@ -66,6 +99,7 @@ impl Knowledge {
             facing: 2, // south — into the maze from the top-left start
             exit_seen: None,
             exit_sight: None,
+            exit_locked: false,
             keys_held: 0,
             keys_seen: Vec::new(),
             dirty: true,
@@ -99,6 +133,9 @@ impl Knowledge {
         if e.locked & bit != 0 {
             return Some(self.keys_held & (1 << e.key[d]) != 0);
         }
+        if e.shut & e.plain & bit != 0 {
+            return Some(false);
+        }
         Some(e.open & bit != 0)
     }
 
@@ -111,6 +148,55 @@ impl Knowledge {
         } else {
             None
         }
+    }
+
+    /// An office door the bot has seen on this edge: `Some(sealed)`.
+    pub fn edge_door(&self, c: Cell, d: usize) -> Option<bool> {
+        let e = self.edges[self.idx(c)];
+        let bit = 1u8 << d;
+        if e.known & bit == 0 {
+            None
+        } else if e.door & bit != 0 {
+            Some(false)
+        } else if e.sealed & bit != 0 {
+            Some(true)
+        } else {
+            None
+        }
+    }
+
+    /// Direction of a still-shut office door on `c`'s edges, if the bot knows of one.
+    pub fn shut_door(&self, c: Cell) -> Option<usize> {
+        let e = self.edges[self.idx(c)];
+        (0..4).find(|&d| e.known & e.shut & (1 << d) != 0)
+    }
+
+    fn set_shut(&mut self, c: Cell, d: usize, shut: bool, plain: bool) {
+        let i = self.idx(c);
+        let e = &mut self.edges[i];
+        let before = (e.shut, e.plain);
+        for (bits, on) in [(&mut e.shut, shut), (&mut e.plain, plain)] {
+            if on {
+                *bits |= 1 << d;
+            } else {
+                *bits &= !(1 << d);
+            }
+        }
+        if before != (e.shut, e.plain) {
+            self.dirty = true;
+        }
+    }
+
+    /// Direction of a still-shut unmarked door on `c`'s edges, if the bot knows of one.
+    pub fn plain_door(&self, c: Cell) -> Option<usize> {
+        let e = self.edges[self.idx(c)];
+        (0..4).find(|&d| e.known & e.shut & e.plain & (1 << d) != 0)
+    }
+
+    /// Direction of a still-shut door with a name plate on `c`'s edges.
+    pub fn marked_door(&self, c: Cell) -> Option<usize> {
+        let e = self.edges[self.idx(c)];
+        (0..4).find(|&d| e.known & e.shut & !e.plain & (1 << d) != 0)
     }
 
     pub fn edge_phantom(&self, c: Cell, d: usize) -> bool {
@@ -155,12 +241,14 @@ impl Knowledge {
         let i = self.idx(c);
         let bit = 1u8 << d;
         let e = &mut self.edges[i];
-        let before = (e.known, e.open, e.locked, e.phantom);
+        let before = (e.known, e.open, e.locked, e.phantom, e.door, e.sealed);
         e.known |= bit;
         // Overwrite (Fog mode mutates edges), so always clear then set.
         e.open &= !bit;
         e.locked &= !bit;
         e.phantom &= !bit;
+        e.door &= !bit;
+        e.sealed &= !bit;
         // A mirror the bot has already walked into stays a known wall.
         let kind = if e.busted & bit != 0 && kind == EdgeKind::Mirror {
             EdgeKind::Wall
@@ -180,8 +268,13 @@ impl Knowledge {
                 e.locked |= bit;
                 e.key[d] = k;
             }
+            EdgeKind::Door => {
+                e.open |= bit;
+                e.door |= bit;
+            }
+            EdgeKind::Sealed => e.sealed |= bit,
         }
-        if before != (e.known, e.open, e.locked, e.phantom) {
+        if before != (e.known, e.open, e.locked, e.phantom, e.door, e.sealed) {
             self.dirty = true;
         }
     }
@@ -208,21 +301,32 @@ impl Knowledge {
         for d in 0..4usize {
             let kind = maze.edge(c, d);
             self.learn(c, d, kind);
+            // A door closed behind the bot on a room it's been through isn't one to open.
+            // A door to open from the hall and look through; a big room's (an open
+            // space's) is just a way in, pushed open by walking through it.
+            let shut = kind == EdgeKind::Door
+                && !maze.transparent(c, d)
+                && maze
+                    .door_at(c, d)
+                    .is_none_or(|i| !maze.doors[i].done && maze.door_peeked(i));
+            let plain = shut && maze.door_at(c, d).is_some_and(|i| !maze.door_marked(i));
+            self.set_shut(c, d, shut, plain);
             let nb = c.step(d);
+            if self.in_bounds(nb) {
+                self.set_shut(nb, opposite(d), shut, plain);
+            }
             if self.in_bounds(nb) {
                 // A mirror is only knowable from the side the bot is looking at — don't
                 // leak the wall onto the far cell (it stays fully unknown, so the near
                 // cell reads as a frontier and the bot walks at the glass).
                 match kind {
                     EdgeKind::Mirror => {}
-                    EdgeKind::Locked(k) => self.learn(nb, opposite(d), EdgeKind::Locked(k)),
-                    EdgeKind::Open => self.learn(nb, opposite(d), EdgeKind::Open),
-                    EdgeKind::Wall => self.learn(nb, opposite(d), EdgeKind::Wall),
+                    k => self.learn(nb, opposite(d), k),
                 }
             }
         }
-        let sees_exit = c == maze.exit
-            || (0..4).any(|d| matches!(maze.edge(c, d), EdgeKind::Open) && c.step(d) == maze.exit);
+        let sees_exit =
+            c == maze.exit || (0..4).any(|d| maze.transparent(c, d) && c.step(d) == maze.exit);
         if sees_exit && self.exit_seen != Some(maze.exit) {
             self.exit_seen = Some(maze.exit);
             self.dirty = true;
@@ -232,7 +336,7 @@ impl Knowledge {
         // neighbours' reveals without its contents ever being seen.
         self.spot_keys(maze, c);
         for d in 0..4usize {
-            if matches!(maze.edge(c, d), EdgeKind::Open) {
+            if maze.transparent(c, d) {
                 self.spot_keys(maze, c.step(d));
             }
         }
@@ -286,17 +390,105 @@ impl Knowledge {
                 }
             }
         }
+        // An office room is open plan (every inside edge open, no pillars): standing in
+        // it, the bot takes in the whole room at a glance — no need to walk every cell
+        // of an open space to map it. From the hall at its open door it sees only what
+        // the doorway shows: the cells whose centre is in sight through the opening,
+        // past the walls either side — the rest it has to step in to look at.
+        if let Some(r) = maze.rooms.iter().find(|r| r.contains(bot)) {
+            for c in r.cells() {
+                self.reveal_cell(maze, c);
+            }
+        }
+        let mut grid: Option<WallGrid> = None;
+        for d in 0..4 {
+            if maze.door_at(bot, d).is_none() || !maze.transparent(bot, d) {
+                continue;
+            }
+            let behind = bot.step(d);
+            let Some(r) = maze.rooms.iter().find(|r| r.contains(behind)) else {
+                continue;
+            };
+            let grid = grid.get_or_insert_with(|| maze.wall_grid());
+            for c in r.cells() {
+                if sees_through_door(grid, bot, d, c) {
+                    self.reveal_cell(maze, c);
+                }
+            }
+        }
         self.exit_sight = exit_sight;
         self.update_pruning();
     }
 
-    /// Fog mode: the bot tried to step through an edge it remembered as open, but the
-    /// maze mutated a wall in behind it. Correct the memory and re-plan.
-    pub fn stale_memory_wall(&mut self, c: Cell, d: usize) {
-        self.learn(c, d, EdgeKind::Wall);
-        let nb = c.step(d);
-        if self.in_bounds(nb) {
-            self.learn(nb, opposite(d), EdgeKind::Wall);
+    /// Fog's forest: the "walls" are trees, and the camera sees between the trunks into
+    /// the corridors either side. Everything within `radius` cells (Euclidean) of the
+    /// bot that exists is revealed too, walls or no walls, so the map shows what the view
+    /// does. `reveal` must run first (it sets the tick).
+    pub fn glimpse(&mut self, maze: &Maze, radius: f32) {
+        let bot = self.pos;
+        let r = radius.ceil() as i32;
+        for y in bot.y - r..=bot.y + r {
+            for x in bot.x - r..=bot.x + r {
+                let c = Cell { x, y };
+                let (dx, dy) = ((x - bot.x) as f32, (y - bot.y) as f32);
+                if maze.cell_in_bounds(c) && maze.is_born(c) && dx.hypot(dy) <= radius {
+                    self.reveal_cell(maze, c);
+                }
+            }
+        }
+        self.update_pruning();
+    }
+
+    /// Fog mode: wipe every cell flagged in `forgot` back to unknown — the maze is
+    /// about to dissolve that ground. An edge shared with a cell that's still
+    /// remembered survives (the maze keeps it too: it belongs to a cell that still
+    /// exists), copied onto the forgotten side, so an open one leaves the forgotten cell
+    /// a frontier into new ground and a wall stays a wall. Clearing those too made a fake
+    /// frontier out of every remembered wall along the edge of memory: the bot walked
+    /// back, found the same wall, left, forgot it, and came back again.
+    pub fn forget(&mut self, forgot: &[bool]) {
+        for y in 0..self.h as i32 {
+            for x in 0..self.w as i32 {
+                let c = Cell { x, y };
+                let i = self.idx(c);
+                if !forgot[i] {
+                    continue;
+                }
+                let mut e = Edges::default();
+                for d in 0..4usize {
+                    let nb = c.step(d);
+                    if !self.in_bounds(nb) || forgot[self.idx(nb)] {
+                        continue;
+                    }
+                    let (o, bit, obit) = (self.edges[self.idx(nb)], 1u8 << d, 1u8 << opposite(d));
+                    if o.known & obit == 0 {
+                        continue;
+                    }
+                    e.known |= bit;
+                    for (dst, src) in [
+                        (&mut e.open, o.open),
+                        (&mut e.locked, o.locked),
+                        (&mut e.phantom, o.phantom),
+                        (&mut e.busted, o.busted),
+                        (&mut e.door, o.door),
+                        (&mut e.sealed, o.sealed),
+                        (&mut e.shut, o.shut),
+                        (&mut e.plain, o.plain),
+                    ] {
+                        if src & obit != 0 {
+                            *dst |= bit;
+                        }
+                    }
+                    e.key[d] = o.key[opposite(d)];
+                }
+                self.edges[i] = e;
+                self.visits[i] = 0;
+            }
+        }
+        if let Some(e) = self.exit_seen
+            && forgot[self.idx(e)]
+        {
+            self.exit_seen = None;
         }
         self.dirty = true;
         self.update_pruning();
@@ -321,7 +513,11 @@ impl Knowledge {
         for y in 0..self.h as i32 {
             for x in 0..self.w as i32 {
                 let c = Cell { x, y };
-                if self.is_frontier(c) || self.exit_seen == Some(c) || self.has_locked_edge(c) {
+                if self.is_frontier(c)
+                    || self.exit_seen == Some(c)
+                    || self.has_locked_edge(c)
+                    || self.shut_door(c).is_some()
+                {
                     push(c, &mut keep, &mut q);
                 }
             }
@@ -350,31 +546,6 @@ impl Knowledge {
     fn has_locked_edge(&self, c: Cell) -> bool {
         let e = self.edges[self.idx(c)];
         (0..4).any(|d| e.locked & (1 << d) != 0 && self.keys_held & (1 << e.key[d]) == 0)
-    }
-
-    /// Best guess at the direction the bot will head next — used only to aim the idle
-    /// "look down the corridor" so the view isn't frozen on a wall between steps.
-    pub fn look_hint(&self) -> usize {
-        let from = self.pos;
-        let back = crate::maze::opposite(self.facing);
-        let mut best: Option<usize> = None;
-        let mut best_score = (2u8, u16::MAX);
-        for (d, nb) in self.open_neighbors(from) {
-            if d == back || self.pruned[self.idx(nb)] {
-                continue;
-            }
-            let rank = if self.is_frontier(nb) || self.exit_seen == Some(nb) {
-                0
-            } else {
-                1
-            };
-            let s = (rank, self.visits(nb));
-            if s < best_score {
-                best_score = s;
-                best = Some(d);
-            }
-        }
-        best.unwrap_or(back)
     }
 
     pub fn record_step(&mut self, to: Cell, facing: usize) {
