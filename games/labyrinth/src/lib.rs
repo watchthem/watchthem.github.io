@@ -97,7 +97,26 @@ pub fn parse_cli_args() -> CliArgs {
     CliArgs {
         debug: false,
         once: false,
-        variant: None,
+        variant: initial_wasm_variant(),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe extern "C" {
+    fn hcg_initial_variant_ordinal() -> i32;
+}
+
+/// Reads the `?variant=tower|dungeon|fog|mirror` URL query param (see
+/// `xtask::variant_query_bridge`) so a link can land directly in that mode instead of the
+/// `V`-cycle's `TowerClimb` starting point — `V` still cycles from there either way.
+#[cfg(target_arch = "wasm32")]
+fn initial_wasm_variant() -> Option<Mode> {
+    match unsafe { hcg_initial_variant_ordinal() } {
+        0 => Some(Mode::TowerClimb),
+        1 => Some(Mode::DungeonCrawl),
+        2 => Some(Mode::Fog),
+        3 => Some(Mode::Mirror),
+        _ => None,
     }
 }
 
@@ -105,6 +124,9 @@ fn bundled_cli() -> CliArgs {
     CliArgs {
         debug: false,
         once: false,
+        #[cfg(target_arch = "wasm32")]
+        variant: initial_wasm_variant(),
+        #[cfg(not(target_arch = "wasm32"))]
         variant: None,
         #[cfg(not(target_arch = "wasm32"))]
         no_ui: false,

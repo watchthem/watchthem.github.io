@@ -1130,16 +1130,20 @@ pub fn wall_live_bridge() -> Markup {
     }
 }
 
-/// Registers a miniquad plugin exposing `env.hcg_initial_variant_is_hex`, letting the
-/// wasm module read the page's `?variant=hex` query param at startup — used by the
-/// `/minesweeper-hex` redirect stub (`static/minesweeper-hex/index.html`) so it lands
-/// directly in Hex mode instead of the Square default. Must run before `load(...)`, same
-/// ordering constraint as `analytics_bridge`.
+/// Registers a miniquad plugin exposing the page's `?variant=` query param to the wasm
+/// module at startup, two ways since different games' variants aren't a shared enum:
+/// - `env.hcg_initial_variant_is_hex` — minesweeper's Square/Hex switch; used by the
+///   `/minesweeper-hex` redirect stub (`static/minesweeper-hex/index.html`).
+/// - `env.hcg_initial_variant_ordinal` — labyrinth's `tower`/`dungeon`/`fog`/`mirror`,
+///   as 0..3, or -1 if absent/unrecognized.
 ///
-/// Registered on *every* game page even though only minesweeper reads it: since all pages
-/// load the one merged binary (see `BUNDLE_WASM`), `lib/minesweeper`'s import of this
-/// function is present in the module whatever game the page runs, and a wasm import the page
-/// never registered fails instantiation with a LinkError.
+/// Must run before `load(...)`, same ordering constraint as `analytics_bridge`.
+///
+/// Registered on *every* game page even though only minesweeper/labyrinth read their own
+/// half of it: since all pages load the one merged binary (see `BUNDLE_WASM`), both
+/// games' imports of these functions are present in the module whatever game the page
+/// runs, and a wasm import the page never registered fails instantiation with a
+/// LinkError.
 pub fn variant_query_bridge() -> Markup {
     html! {
         script {
@@ -1148,6 +1152,10 @@ pub fn variant_query_bridge() -> Markup {
                  \x20 register_plugin: function(importObject) {\n\
                  \x20   importObject.env.hcg_initial_variant_is_hex = function() {\n\
                  \x20     return new URLSearchParams(location.search).get('variant') === 'hex' ? 1 : 0;\n\
+                 \x20   };\n\
+                 \x20   importObject.env.hcg_initial_variant_ordinal = function() {\n\
+                 \x20     var modes = ['tower', 'dungeon', 'fog', 'mirror'];\n\
+                 \x20     return modes.indexOf(new URLSearchParams(location.search).get('variant'));\n\
                  \x20   };\n\
                  \x20 },\n\
                  \x20 version: 1,\n\

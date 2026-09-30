@@ -3779,7 +3779,7 @@ impl Decor {
         let len = (f.1 * dir_vec(t)).length();
         let a = |w0: f32, w1: f32| (w0 / len, w1 / len);
         let (plain, bx) = (Finish::Plain, Shape::Box);
-        let (a0, a1, b0, b1) = (1.7, 2.15, 0.0, 0.19);
+        let (a0, a1, b0, b1) = (2.0, 2.45, 0.0, 0.19);
         let (floor, top) = (0.24, 0.42);
         self.group += 1;
         self.put(
@@ -4853,15 +4853,15 @@ impl Decor {
             plain,
             ball,
         );
-        self.put(
+        self.round(
             f,
             t,
-            (0.4, 0.412),
-            (0.16, 0.172),
+            (0.406, 0.166),
+            (0.006, 0.006),
             (0.06, 0.72),
             WOOD,
             plain,
-            bx,
+            cyl,
         );
 
         // The WET FLOOR sign by the door (clear of its swing): a yellow A-frame,
