@@ -99,7 +99,7 @@ firing a "rotate" cue for a rotation that never happened.
 `intro` = "Korobeiniki" (Коробе́йники, ~1861 Russian folk tune, public domain — the real
 Tetris theme), transcribed fresh in `korobeiniki()`, 8 measures each exactly
 `MEASURE_SECS`. The melody is **A natural minor** (F♮/G♮ in m5, never F#/G#, closes on a
-held A4) — `CHORD_GUIDE_TONES` harmonizes it Am11-Am7-Em7-Am7-Dm7-C6-E7-**A6** (i-i-v-i-
+held A4) — `CHORD_GUIDE_TONES` harmonizes it E7-Am7-E7-Am7-Dm7-C6-E7-**A6** (V-i-V-i-
 iv-♭III-V-**I**), one chord per measure as just the 3rd+7th (guide tones — the two notes
 that define a chord's color; a full triad reads as muddy under one melody line). The
 final chord (m8) is a Picardy third — the tonic raised to major (`6` voicing, matching
@@ -185,6 +185,11 @@ clash check and still sounded like "a mess" — only a full 8-measure functional
 found it. Watch for the clash check's subtler failure mode too: a chord can be
 clash-free yet still not resolve where the melody itself actually *lands* (e.g. the
 closing note) — check what the tune is really centered on, not just adjacent notes.
+And the converse of "which notes never appear": a minor key's V is *major* (harmonic
+minor's raised 7th) even when the melody never states that note — m1/m3 as `Am11`/`Em7`
+(justified by "no G# in the melody") were clash-free but heard as off against the tune's
+well-known E-major harmony; both are `E7` now. For a famous tune, its traditional
+harmony is the reference listeners hear against.
 Prefer octave-shifting a guide tone (12 semitones) for smoother voice-leading over
 adding a 3rd note. Iterate by listening (`mise run run tetris`) — code-reading alone
 won't tell you if a harmony works, and for the functional check, if you're not confident

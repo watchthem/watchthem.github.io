@@ -171,8 +171,8 @@ fn korobeiniki() -> Vec<(Option<f32>, f32)> {
 }
 
 /// One (3rd, 7th) guide-tone pair per measure of `korobeiniki`, in semitones from A4, a
-/// jazz reharmonization of the tune: **i - i - v - i - iv - ♭III - V - I** (Am11 - Am7 -
-/// Em7 - Am7 - Dm7 - C6 - E7 - **A6**), one octave below the melody. Guide tones only
+/// jazz reharmonization of the tune: **V - i - V - i - iv - ♭III - V - I** (E7 - Am7 -
+/// E7 - Am7 - Dm7 - C6 - E7 - **A6**), one octave below the melody. Guide tones only
 /// (not full triads) — the 3rd and 7th are the two notes that actually define a chord's
 /// quality/color, the standard jazz-comping shorthand; a full stacked chord here would
 /// just read as muddy under a single-line melody.
@@ -208,12 +208,14 @@ fn korobeiniki() -> Vec<(Option<f32>, f32)> {
 /// Every pair here is verified clash-free against its measure's actual melody notes
 /// (pairwise semitone distance, not by ear) — see `games/tetris/CLAUDE.md`'s "Fixing
 /// bad voicings" section for the method — **and** against the actual A-minor key center.
-/// **m1** keeps its original `(G, D)` pair but is now read as `Am11` (the root moved to
-/// A in `BASS_ROOTS` below; G+D over A is the ♭7 and 11, a quartal jazz voicing) rather
-/// than `Em7` over an E root — one number moved (the bass), not the guide tones. **m3**
-/// is `Em7` (the true v) and **m4** is `Am7` (the true i, matching m8's identical
-/// closing melody C5-A4-A4) — m1/m3 and m3/m4 no longer share a chord, so a plain swap
-/// wasn't available; both changed. **m7** is `E7` (`G#4`, the raised leading tone that
+/// **m1 and m3 are `E7`**, the major V — the tune's traditional harmony (the Game Boy
+/// bass plays G# there). A previous version used a minor v (`Em7`, G♮) at m3 and a
+/// tonic `Am11` (G+D over an A root) at m1, reasoning that the melody never states G#:
+/// both were clash-free and both sounded off, because a minor key's dominant is major
+/// (harmonic minor's raised 7th) whether or not the melody spells it, and listeners hear
+/// this tune against the harmony they already know. The melody's passing C5 over the
+/// comp's G# (a ♭13, one eighth each) is the same tension m7 already has. **m4** is
+/// `Am7` (the true i, matching m8's identical closing melody C5-A4-A4). **m7** is `E7` (`G#4`, the raised leading tone that
 /// gives the final cadence real pull, `-1.0`/`-7.0`) rather than `Bm7` — the dominant
 /// this key actually has. First draft used `B7♭9` (guide tones D#, A) for that same
 /// slot — the textbook altered dominant — but the melody there is a plain diatonic run
@@ -223,9 +225,9 @@ fn korobeiniki() -> Vec<(Option<f32>, f32)> {
 /// melody's repeated C); swapped for the plain `6`-voicing instead — less flashy, but
 /// actually consonant.
 const CHORD_GUIDE_TONES: [(f32, f32); 8] = [
-    (-2.0, -7.0),  // m1 Am11 (over A root): 11th=G, b7=D
+    (-1.0, -7.0),  // m1 E7:  3rd=G#, 7th=D
     (-9.0, -2.0),  // m2 Am7: 3rd=C, 7th=G
-    (-2.0, -7.0),  // m3 Em7: 3rd=G, 7th=D
+    (-1.0, -7.0),  // m3 E7:  3rd=G#, 7th=D
     (-9.0, -2.0),  // m4 Am7: 3rd=C, 7th=G
     (-4.0, -9.0),  // m5 Dm7: 3rd=F, 7th=C
     (-5.0, -12.0), // m6 C6:  3rd=E, 6th=A
@@ -289,16 +291,14 @@ fn comp_track() -> Vec<f32> {
 }
 
 /// Root note per measure, one octave below `CHORD_GUIDE_TONES`'s own octave so the bass
-/// sits under the comp rather than doubling it: Am-Am-Em-Am-Dm-C-E-A6 (matching
+/// sits under the comp rather than doubling it: E-Am-E-Am-Dm-C-E-A6 (matching
 /// `CHORD_GUIDE_TONES`'s A-minor progression, Picardy-third ending included — see its
-/// doc comment). Not simply "3rd minus a 3rd" from the guide tones any more: m1's guide
-/// tones are voiced as the 11th and ♭7 over an A root (an `Am11` reading), not a 3rd/7th
-/// pair a root could be mechanically derived from, and m7's root (E) is the *5th* below
-/// its guide tones' implied E-something, not a 3rd below — both come from the
+/// doc comment). Not mechanically derivable from the guide-tone pairs (the E7 roots sit
+/// a major 3rd below G#, C6's root isn't below its 6th, ...) — they come from the
 /// key-center analysis, not arithmetic on the pair stored above. m8's root (A) is
 /// unaffected by its own major/minor swap — only the chord's 3rd changes, not its root.
 const BASS_ROOTS: [f32; 8] = [
-    -24.0, // m1 A
+    -17.0, // m1 E
     -24.0, // m2 A
     -17.0, // m3 E
     -24.0, // m4 A
