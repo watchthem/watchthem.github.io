@@ -301,6 +301,28 @@ mise run generate-index
 description = "Remove dist/ so the next build-wasm/deploy fully regenerates everything (screenshots included) instead of skipping games whose wasm and xtask templates are both unchanged"
 run = "rm -rf dist"
 
+# Manually ping IndexNow (Bing, Yandex, Seznam, Naver — not Google). No args submits every
+# page in the live sitemap; or pass specific URLs:
+#   mise run indexnow https://watchthem.github.io/labyrinth/
+# Deliberately not part of deploy: only submit pages that actually changed. The key is
+# public by design, verified against static/<key>.txt at the site root.
+[tasks.indexnow]
+description = "Submit live URLs to IndexNow (default: every page in the live sitemap)"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+if [ $# -gt 0 ]; then
+  printf '%s\\n' "$@"
+else
+  curl -sSf https://watchthem.github.io/sitemap.xml | grep -o '<loc>[^<]*' | sed 's/<loc>//'
+fi \
+  | jq -Rn --arg host watchthem.github.io --arg key 45afa912b5705cb064d956a30cb52a97 \
+      '{host: $host, key: $key, urlList: [inputs]}' \
+  | curl -sS --fail-with-body -X POST https://api.indexnow.org/indexnow \
+      -H 'Content-Type: application/json; charset=utf-8' --data-binary @- \
+      -w 'HTTP %{http_code}\\n'
+"""
+
 # Serve dist/ locally (WASM requires HTTP — can't open via file://)
 [tasks.serve]
 description = "Serve dist/ on http://localhost:8080"
