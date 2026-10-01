@@ -10,3 +10,4 @@ control = { path = "../../lib/control" }
 render_cache = { path = "../../lib/render_cache" }
 game_common = { path = "../../lib/game_common" }
 beam_solver = { path = "../../lib/beam_solver" }
+audio = { path = "../../lib/audio" }

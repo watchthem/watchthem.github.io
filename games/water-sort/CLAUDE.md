@@ -13,6 +13,7 @@ level table.
 | `src/game.rs` | `Bottle`, `Game`, `Move`, `LevelParams` (difficulty scaling), generation + solvability probe |
 | `src/solver.rs` | `Solver::choose_move` — `beam_solver`-backed pour selection |
 | `src/lib.rs` | Rendering (bottle segments, fog, lock badge), pour animation, CLI |
+| `src/sound.rs` | Procedural SFX (`lib/audio`), synthesized once at startup |
 | `src/main.rs` | Thin standalone binary — `water_sort::start()` and nothing else |
 
 ## Bottle model (`game.rs`)
@@ -372,6 +373,18 @@ Render behind a dark scrim with a small padlock badge above them showing the tar
 color as a dot — cleared automatically (badge and scrim both) the frame after
 `Bottle.unlocked` flips true, no separate animation needed since the pour that triggers
 an unlock already has its own.
+
+## Sound (`sound.rs`)
+
+Triggers hang off the animation, not `Game::apply` (which runs a whole pour earlier):
+the glug starts when `anim_t` crosses `STREAM_START` (stream begins falling); set-down
+clink, sorted chime, unlock latch and won/stuck stingers all fire when the pour
+animation completes, diffing `game` against the still-pre-pour `display_game`. A pour
+that wins plays the won arpeggio *instead of* its sorted chime. Glug (a stochastic population
+of smooth-onset sine bubbles — see `glug` / `mod pour`, incl. which variants lost) is pre-rendered per
+`(to_before, to_after)` pair — pitch follows the air column above the liquid, so it
+rises as the destination fills. Chimes are one pentatonic glass note per color. Muted
+under `?embed`/`?stream` (wall).
 
 ## Running
 

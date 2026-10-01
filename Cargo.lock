@@ -1552,6 +1552,7 @@ dependencies = [
 name = "water-sort"
 version = "0.1.0"
 dependencies = [
+ "audio",
  "beam_solver",
  "control",
  "game_common",

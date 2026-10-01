@@ -3,6 +3,7 @@ use render_cache::RenderCache;
 
 mod game;
 mod solver;
+mod sound;
 
 use game::{Bottle, CAPACITY, Game, Move, Phase};
 use solver::Solver;
@@ -26,6 +27,9 @@ const POUR_FRAC: f32 = 0.40;
 /// constant for the entire time any stream is on screen (see the `pour` block).
 const POUR_RISE_FRAC: f32 = 0.28;
 const POUR_HOLD_FRAC: f32 = 0.47;
+/// `anim_t` at which the stream starts falling (end of the Rise sub-beat) — the pour's
+/// glug starts here.
+const STREAM_START: f32 = LIFT_FRAC + POUR_FRAC * POUR_RISE_FRAC;
 const RESTART_DELAY: f64 = 2.4;
 const HUD_H: f32 = 34.0;
 /// Peak tip angle (radians) the source bottle rotates to while hovering beside the
@@ -809,6 +813,12 @@ pub async fn run_ui(cli: CliArgs) -> control::ExitReason {
 
     render_cache::prewarm_glyphs(&["?"], &[16, 20]);
 
+    // The ambient wall runs every game at once: stay silent there.
+    if control.stream_mode() {
+        audio::playback::set_muted(true);
+    }
+    let sound = sound::Sound::load(screenshot::seed()).await;
+
     let mut cached_size = (screen_width(), screen_height());
     let mut board_cache = bottle_render_cache(cached_size);
     board_cache.mark_dirty();
@@ -840,9 +850,34 @@ pub async fn run_ui(cli: CliArgs) -> control::ExitReason {
             board_cache = bottle_render_cache(cur_size);
             cached_size = cur_size;
         }
-        let was_animating = anim_t < 1.0;
+        let prev_t = anim_t;
         anim_t = (anim_t + dt / ANIM_DURATION).min(1.0);
-        if was_animating && anim_t >= 1.0 {
+        if let Some(p) = &pour
+            && prev_t < STREAM_START
+            && anim_t >= STREAM_START
+        {
+            sound.pour(p.to_before, p.to_before + p.amount);
+        }
+        if prev_t < 1.0 && anim_t >= 1.0 {
+            // Everything the pour caused lands now, with the bottle back in its slot:
+            // `display_game` is still the pre-pour board.
+            sound.set_down();
+            if let Some(p) = &pour
+                && game.bottles[p.m.to].is_solved()
+            {
+                if game.phase == Phase::Won {
+                    sound.won();
+                } else {
+                    sound.sorted(p.color);
+                }
+            }
+            if game.phase == Phase::Stuck {
+                sound.stuck();
+            }
+            let unlocked = |g: &Game| g.bottles.iter().filter(|b| b.unlocked).count();
+            if unlocked(&game) > unlocked(&display_game) {
+                sound.unlock();
+            }
             display_game = game.clone();
             pour = None;
             board_cache.mark_dirty();
@@ -873,6 +908,7 @@ pub async fn run_ui(cli: CliArgs) -> control::ExitReason {
                         anim_t = 0.0;
                     } else {
                         game.phase = Phase::Stuck;
+                        sound.stuck();
                     }
                 }
             }
@@ -991,7 +1027,7 @@ pub async fn run_ui(cli: CliArgs) -> control::ExitReason {
             // or (when frozen to compensate) detached from the bottle's real neck.
             // Righting after the stream is gone sidesteps the choice entirely.
             let pour_end = LIFT_FRAC + POUR_FRAC;
-            let rise_end = LIFT_FRAC + POUR_FRAC * POUR_RISE_FRAC;
+            let rise_end = STREAM_START;
             let hold_end = rise_end + POUR_FRAC * POUR_HOLD_FRAC;
 
             let (src_pos, tilt, pour_progress, stream) = if anim_t < LIFT_FRAC {
