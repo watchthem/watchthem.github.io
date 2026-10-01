@@ -4755,8 +4755,8 @@ impl Decor {
             glow: false,
         });
 
-        // A broom leaning on the side wall by the back corner, its handle stepping toward
-        // the wall.
+        // A broom stood upright in the back corner — a round handle, since a leaning one
+        // could only be stepped boxes (blocks are upright), which read as pixelated.
         let f = shifted(f0, t, -1.5 * m, -1.25 * m);
         self.group += 1;
         self.put(
@@ -4779,20 +4779,16 @@ impl Decor {
             plain,
             bx,
         );
-        for i in 0..5 {
-            let b = 0.19 - 0.019 * i as f32;
-            let z0 = 0.07 + 0.13 * i as f32;
-            self.put(
-                f,
-                t,
-                (0.25, 0.264),
-                (b - 0.007, b + 0.007),
-                (z0, z0 + 0.13),
-                WOOD,
-                plain,
-                bx,
-            );
-        }
+        self.round(
+            f,
+            t,
+            (0.257, 0.19),
+            (0.007, 0.007),
+            (0.07, 0.72),
+            WOOD,
+            plain,
+            Shape::Cyl,
+        );
 
         // The mop bucket on its casters against the side wall: walls round dirty water,
         // a wringer on the door end, the mop standing in it.
