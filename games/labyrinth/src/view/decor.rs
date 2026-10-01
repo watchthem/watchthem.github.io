@@ -6402,7 +6402,7 @@ impl Decor {
             draw_grin(view, front, g, dynamic.t);
         }
         if let Some(at) = dynamic.fire {
-            draw_fire(view, front, at, dynamic.t, pal);
+            draw_fire(view, at, dynamic.t, pal);
         }
     }
 }
@@ -7180,13 +7180,22 @@ fn door_sign(
 
 /// The campfire's flames: a warm glow on the ground, then tongues of flame licking up
 /// from the logs — each a flickering teardrop, hotter (yellower, smaller) inside —
-/// and a few sparks rising.
-fn draw_fire(view: &View, front: &Occluders, at: Vec2, t: f32, pal: &Palette) {
-    let Some((base, depth)) = onto(view, front, at, 0.06) else {
+/// and a few sparks rising. Not culled by its own base point (`onto`): the logs in
+/// front of it would hide the whole fire, as would its centre sliding off screen up
+/// close. The trees are its only occlusion (painter's order); the mist fades it like them.
+fn draw_fire(view: &View, at: Vec2, t: f32, pal: &Palette) {
+    let Some((sx, depth)) = view.project(at) else {
         return;
     };
+    // Up close the centre can leave the screen while the flames still show: test the
+    // edge column nearest it.
+    let edge = sx.clamp(view.area.x, view.area.x + view.area.w - COL_STEP);
+    if !view.visible(edge, depth - 0.03) {
+        return;
+    }
+    let base = vec2(sx, view.screen_y(0.06, depth));
     let px = view.px_per_unit(depth);
-    let lit = lit_at(depth, pal.haze * 0.35, 1.0);
+    let lit = lit_at(depth, pal.haze, 1.0);
     let glow = |r: f32, a: f32, c: [f32; 3]| {
         draw_circle(
             base.x,
@@ -7214,7 +7223,7 @@ fn draw_fire(view: &View, front: &Occluders, at: Vec2, t: f32, pal: &Palette) {
         let top = vec2(x + sway * px, base.y - h * flick * px);
         let (l, r) = (vec2(x - w * px, base.y), vec2(x + w * px, base.y));
         let mid = vec2(x, base.y - h * flick * 0.45 * px);
-        let c = Color::new(col[0], col[1], col[2], 0.9 * lit.max(0.4));
+        let c = Color::new(col[0], col[1], col[2], 0.9 * lit);
         draw_triangle(l, r, top, c);
         draw_circle(mid.x, base.y - w * 0.4 * px, w * px, c);
     }
