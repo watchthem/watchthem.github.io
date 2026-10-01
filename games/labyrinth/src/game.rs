@@ -183,11 +183,15 @@ pub struct Game {
 pub const FOG_FORGET: u32 = 30;
 /// Fog: how often the forget-and-dissolve pass runs.
 const FOG_REGEN_EVERY: u32 = 4;
+/// Fog: line of sight down a corridor — shorter than `LOS_RADIUS`, the mist is thick
+/// (`fog::FOREST`: a corridor is mostly gone ~3 cells out), so the minimap never knows
+/// more than the view shows, and ground can change closer by.
+const FOG_LOS: i32 = 4;
 /// Fog: cells within this many cells (Chebyshev) of the bot exist. Covers both the
 /// corridor line of sight (plus the neighbour it glimpses past its end) and the
-/// forest's tree range (`raycast::TREE_RANGE`, 5 cells), so ground is never generated
+/// forest's tree range (`raycast::TREE_RANGE`, ~4 cells), so ground is never generated
 /// or dissolved where it could visibly pop.
-const FOG_SIGHT: i32 = LOS_RADIUS + 1;
+const FOG_SIGHT: i32 = FOG_LOS + 1;
 /// Fog: how far (cells, Euclidean) the bot sees between the trees, walls or not — the
 /// spruces are sparse enough that the neighbouring corridors show through.
 const FOG_GLIMPSE: f32 = 2.3;
@@ -243,10 +247,10 @@ impl Game {
             });
         know.exit_locked = boss.is_some();
 
-        // A bot that walks every corridor twice sits well under this; a lost bot trips
-        // it. Fog gets a tighter cap — a memorising bot *must* be able to lose there.
+        // Runaway guard only: a bot that walks every corridor twice sits well under this.
+        // Fog has none — it always gets out, however long the walk.
         let step_cap = match mode {
-            Mode::Fog => (w * h * 7) as u32,
+            Mode::Fog => u32::MAX,
             _ => (w * h * 8) as u32,
         };
 
@@ -308,7 +312,12 @@ impl Game {
     }
 
     fn look(&mut self, tick: u32) {
-        self.know.reveal(&self.maze, LOS_RADIUS, tick);
+        let los = if self.mode == Mode::Fog {
+            FOG_LOS
+        } else {
+            LOS_RADIUS
+        };
+        self.know.reveal(&self.maze, los, tick);
         if self.mode == Mode::Fog {
             self.know.glimpse(&self.maze, FOG_GLIMPSE);
         }

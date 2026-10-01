@@ -42,9 +42,10 @@ pub struct Mist {
     pub floor: [f32; 3],
 }
 
-/// The Forest's morning mist.
+/// The Forest's morning mist — thick: level transmittance falls to 10% ~5 units (2.5
+/// cells) out. The game's `FOG_LOS` is matched to it.
 pub const FOREST: Mist = Mist {
-    density: 0.30,
+    density: 0.45,
     ground: 0.45,
     scale: 1.2,
     horizon: [0.72, 0.76, 0.74],

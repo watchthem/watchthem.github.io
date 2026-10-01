@@ -5,6 +5,11 @@
 //! the bot comes close; owls on low branches, blinking and hooting. Their calls come
 //! out as `Call`s for the sound layer (`take_calls`), positioned where the bird is.
 //!
+//! In the fog the bot leaves a trail of breadcrumbs (`drop_crumb`), and the crows come
+//! down to eat it — Hansel and Gretel's forest, where the way back doesn't last. A crumb
+//! also goes when the ground under it dissolves (its square turns solid). Pure
+//! dressing: the forgetting itself is `Game`'s, by age.
+//!
 //! They live in world space around the camera: each is (re)spawned somewhere open
 //! within a few cells, preferably out of sight (behind the camera or far into the
 //! haze), and respawned once it strays too far — an endless population from a handful.
@@ -33,6 +38,14 @@ const CRUISE: f32 = 6.5;
 const STARTLE: f32 = 1.6;
 /// Clearance from any solid square: a bunny never hops into a hedge or a trunk.
 const CLEAR: f32 = 0.14;
+/// A crow only comes down for a crumb at least this far from the bot, and within
+/// `CRUMB_REACH` of it (so the feeding happens where the bot may look back and see it).
+const CRUMB_SHY: f32 = 2.5;
+const CRUMB_REACH: f32 = 8.0;
+/// The trail's spacing: a crumb every this far along the bot's path.
+const CRUMB_STEP: f32 = 0.22;
+/// Most crumbs on the ground at once (a few dozen squares of trail); the oldest go first.
+const MAX_CRUMBS: usize = 200;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -50,6 +63,18 @@ enum Flight {
     Perched,
     /// Off and away, climbing back to `CRUISE`.
     Leaving,
+    /// On the ground pecking at a crumb (`Critter::crumb`); `hop` counts down to the
+    /// last peck.
+    Feeding,
+}
+
+/// A breadcrumb on the forest floor.
+#[derive(Clone, Copy)]
+struct Crumb {
+    id: u32,
+    pos: Vec2,
+    /// A crow has it (on its way down, or pecking).
+    claimed: bool,
 }
 
 /// A bird call, for the sound layer.
@@ -88,6 +113,8 @@ struct Critter {
     phase: f32,
     /// Bunnies: 0 is the White Rabbit.
     variant: u8,
+    /// Crows: the crumb (`Crumb::id`) it's coming down for or eating.
+    crumb: Option<u32>,
 }
 
 pub struct Critters {
@@ -96,6 +123,8 @@ pub struct Critters {
     list: Vec<Critter>,
     t: f32,
     calls: Vec<(Call, Vec2)>,
+    crumbs: Vec<Crumb>,
+    next_crumb: u32,
 }
 
 /// Open floor at `p` — among thin walls, the strips either side of a slab too, so
@@ -131,7 +160,63 @@ impl Critters {
             list: Vec::new(),
             t: 0.0,
             calls: Vec::new(),
+            crumbs: Vec::new(),
+            next_crumb: 0,
         }
+    }
+
+    /// The bot drops a crumb where it stands (grid coordinates), if the trail has none
+    /// within `CRUMB_STEP` — called every frame, so it follows the path the bot walks.
+    pub fn drop_crumb(&mut self, at: Vec2) {
+        if self.crumbs.iter().any(|c| c.pos.distance(at) < CRUMB_STEP) {
+            return;
+        }
+        if self.crumbs.len() >= MAX_CRUMBS
+            && let Some(i) = self.crumbs.iter().position(|c| !c.claimed)
+        {
+            self.crumbs.remove(i);
+        }
+        let jitter = vec2(self.range(-0.05, 0.05), self.range(-0.05, 0.05));
+        self.crumbs.push(Crumb {
+            id: self.next_crumb,
+            pos: at + jitter,
+            claimed: false,
+        });
+        self.next_crumb += 1;
+    }
+
+    /// A new maze: the old trail is gone.
+    pub fn clear_crumbs(&mut self) {
+        self.crumbs.clear();
+    }
+
+    /// The nearest unclaimed crumb to `from` a crow would come down for, if any.
+    fn free_crumb(&self, from: Vec2, cam: Vec2) -> Option<usize> {
+        self.crumbs
+            .iter()
+            .enumerate()
+            .filter(|(_, k)| {
+                let d = k.pos.distance(cam);
+                !k.claimed && (CRUMB_SHY..=CRUMB_REACH).contains(&d)
+            })
+            .min_by(|a, b| a.1.pos.distance(from).total_cmp(&b.1.pos.distance(from)))
+            .map(|(i, _)| i)
+    }
+
+    /// Send crow `c` down to crumb `i`.
+    fn go_for_crumb(&mut self, c: &mut Critter, i: usize, speed: f32) {
+        let k = &mut self.crumbs[i];
+        k.claimed = true;
+        c.crumb = Some(k.id);
+        c.to = k.pos;
+        c.vel = (k.pos - c.pos).normalize_or_zero() * speed;
+        c.perch_z = 0.0;
+        c.flight = Flight::Inbound;
+    }
+
+    fn crumb_index(&self, id: Option<u32>) -> Option<usize> {
+        let id = id?;
+        self.crumbs.iter().position(|k| k.id == id)
     }
 
     fn rand(&mut self) -> f32 {
@@ -150,6 +235,7 @@ impl Critters {
         if self.theme != Some(theme) {
             self.theme = Some(theme);
             self.list.clear();
+            self.crumbs.clear();
             let kinds: &[(Kind, usize)] = match theme {
                 // One bunny — the White Rabbit, forever late — so never more than one in view.
                 ThemeKind::Garden => &[(Kind::Bunny, 1)],
@@ -173,11 +259,14 @@ impl Critters {
                         vel: Vec2::ZERO,
                         phase: 0.0,
                         variant: i as u8,
+                        crumb: None,
                     });
                 }
             }
         }
         self.t += dt;
+        // Ground dissolved into forest takes its crumbs with it.
+        self.crumbs.retain(|k| !grid.solid_at(k.pos));
         for i in 0..self.list.len() {
             let mut c = self.list[i];
             let dist = c.pos.distance(cam);
@@ -191,6 +280,9 @@ impl Critters {
                 Kind::Crow => dist > FLY_GONE,
             };
             if lost {
+                if let Some(i) = self.crumb_index(c.crumb.take()) {
+                    self.crumbs[i].claimed = false;
+                }
                 match self.spawn(c, grid, cam, dir) {
                     Some(n) => c = n,
                     None => continue,
@@ -249,6 +341,13 @@ impl Critters {
                 c.z = CRUISE;
                 c.perch_z = self.range(2.2, 3.6);
                 c.flight = Flight::Inbound;
+                c.crumb = None;
+                if self.rand() < 0.6
+                    && let Some(i) = self.free_crumb(perch, cam)
+                {
+                    let speed = c.vel.length();
+                    self.go_for_crumb(&mut c, i, speed);
+                }
                 Some(c)
             }
             Kind::Owl => {
@@ -359,19 +458,35 @@ impl Critters {
     fn fly(&mut self, c: &mut Critter, dt: f32, grid: &WallGrid, cam: Vec2) {
         match c.flight {
             Flight::Inbound => {
+                // Its crumb gone (eaten by another, or the ground dissolved): off again.
+                if c.crumb.is_some() && self.crumb_index(c.crumb).is_none() {
+                    c.crumb = None;
+                    c.vel = c.vel.normalize_or_zero() * 2.4;
+                    c.flight = Flight::Leaving;
+                    return;
+                }
                 let step = c.vel.length() * dt;
                 let rem = c.to - c.pos;
                 if rem.length() <= step {
                     c.pos = c.to;
                     c.z = c.perch_z;
+                    if c.crumb.is_some() {
+                        // Faces the way it came in.
+                        c.from = c.pos - c.vel.normalize_or_zero() * 0.3;
+                        c.flight = Flight::Feeding;
+                        c.hop = self.range(2.5, 4.5);
+                    } else {
+                        c.flight = Flight::Perched;
+                        c.hop = self.range(10.0, 30.0);
+                    }
                     c.vel = Vec2::ZERO;
-                    c.flight = Flight::Perched;
-                    c.hop = self.range(10.0, 30.0);
                     c.call = self.range(0.5, 4.0);
                 } else {
                     c.pos += rem.normalize() * step;
-                    // Glides down over the last few units.
-                    c.z = c.perch_z + (CRUISE - c.perch_z) * (rem.length() / 4.0).min(1.0);
+                    // Glides down over the last few units (never climbing: a hop from
+                    // one crumb to the next stays low).
+                    c.z =
+                        c.z.min(c.perch_z + (CRUISE - c.perch_z) * (rem.length() / 4.0).min(1.0));
                     // Flapping on the way in; the glide at the end is silent.
                     c.call -= dt;
                     if c.call <= 0.0 && rem.length() > 4.0 {
@@ -396,15 +511,48 @@ impl Critters {
                         c.since_call = 0.0;
                         self.calls.push((Call::Caw, c.pos));
                     }
-                    let away = c.pos - cam;
-                    let a = if startled {
-                        away.to_angle() + self.range(-0.6, 0.6)
-                    } else {
-                        self.range(0.0, 2.0 * PI)
-                    };
-                    c.vel = Vec2::from_angle(a) * self.range(2.2, 3.0);
-                    c.flight = Flight::Leaving;
-                    c.call = 0.6;
+                    // Bored of the branch: down to the bot's trail, if there's any.
+                    if !startled
+                        && self.rand() < 0.7
+                        && let Some(i) = self.free_crumb(c.pos, cam)
+                    {
+                        self.go_for_crumb(c, i, 2.0);
+                        return;
+                    }
+                    self.take_off(c, cam, startled);
+                }
+            }
+            Flight::Feeding => {
+                let Some(i) = self.crumb_index(c.crumb) else {
+                    c.crumb = None;
+                    self.take_off(c, cam, false);
+                    return;
+                };
+                if c.pos.distance(cam) < STARTLE * 1.3 {
+                    // Scattered off the trail: the crumb's still there.
+                    self.crumbs[i].claimed = false;
+                    c.crumb = None;
+                    self.calls.push((Call::Takeoff, c.pos));
+                    c.since_call = 0.0;
+                    self.calls.push((Call::Caw, c.pos));
+                    self.take_off(c, cam, true);
+                    return;
+                }
+                c.hop -= dt;
+                if c.hop > 0.0 {
+                    return;
+                }
+                // Eaten. The next crumb along, if it's close; else away.
+                self.crumbs.remove(i);
+                c.crumb = None;
+                match self.free_crumb(c.pos, cam) {
+                    Some(j) if self.crumbs[j].pos.distance(c.pos) < 2.5 => {
+                        self.go_for_crumb(c, j, 1.2);
+                    }
+                    _ => {
+                        self.calls.push((Call::Takeoff, c.pos));
+                        self.take_off(c, cam, false);
+                    }
                 }
             }
             Flight::Leaving => {
@@ -416,6 +564,54 @@ impl Critters {
                     c.call = self.range(0.35, 0.5);
                     self.calls.push((Call::Flap, c.pos));
                 }
+            }
+        }
+    }
+
+    /// Crow `c` flies off — away from the bot if `startled`, else anywhere.
+    fn take_off(&mut self, c: &mut Critter, cam: Vec2, startled: bool) {
+        let away = c.pos - cam;
+        let a = if startled {
+            away.to_angle() + self.range(-0.6, 0.6)
+        } else {
+            self.range(0.0, 2.0 * PI)
+        };
+        c.vel = Vec2::from_angle(a) * self.range(2.2, 3.0);
+        c.flight = Flight::Leaving;
+        c.call = 0.6;
+    }
+
+    /// The breadcrumbs on the forest floor, drawn before the trees and critters (which
+    /// stand over them). Each is a few pale flecks, faded by the mist.
+    pub fn draw_crumbs(&self, view: &View, pal: &Palette, light: &Lighting) {
+        for k in &self.crumbs {
+            let Some((sx, depth)) = view.project(k.pos) else {
+                continue;
+            };
+            if !view.visible(sx, depth) {
+                continue;
+            }
+            let px = view.px_per_unit(depth);
+            if px * 0.012 < 0.5 {
+                continue;
+            }
+            let (lit, fog) = fade_at(view, pal, k.pos, 0.0, depth, light.base);
+            let col = Color::new(
+                0.86 * lit + fog.r * (1.0 - lit),
+                0.74 * lit + fog.g * (1.0 - lit),
+                0.52 * lit + fog.b * (1.0 - lit),
+                1.0,
+            );
+            let y = view.screen_y(0.0, depth);
+            let flat = ((y - view.horizon).max(0.0) / px).min(1.0) * 0.5;
+            let h = (k.id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            for f in 0..2u64 {
+                let r = |s: u64| ((h >> (s * 8)) & 0xFF) as f32 / 255.0 - 0.5;
+                let (u, v) = (r(f * 2) * 0.07, r(f * 2 + 1) * 0.07);
+                // `v` runs along the view: deeper flecks sit higher and closer together.
+                let (fx, fy) = (sx + u * px, y - v * px * flat);
+                let size = (0.012 + 0.005 * r(f + 6)) * px;
+                draw_ellipse(fx, fy, size, size * flat.max(0.2), 0.0, col);
             }
         }
     }
@@ -481,7 +677,7 @@ impl Critters {
         };
         // Which way it faces on screen: its motion's screen direction.
         let heading = match c.kind {
-            Kind::Crow if c.flight == Flight::Perched => c.pos - c.from,
+            Kind::Crow if matches!(c.flight, Flight::Perched | Flight::Feeding) => c.pos - c.from,
             Kind::Crow if c.flight == Flight::Inbound => c.to - c.pos,
             Kind::Crow => c.vel,
             _ => c.to - c.from,
@@ -585,19 +781,25 @@ impl Critters {
                 circle(0.075, z + 0.12, 0.04, col(fur));
                 circle(0.092, z + 0.128, 0.008, col([0.08, 0.05, 0.05]));
             }
-            Kind::Crow if c.flight == Flight::Perched => {
-                // On a branch: bobs its head now and then, beak open while it caws.
+            Kind::Crow if matches!(c.flight, Flight::Perched | Flight::Feeding) => {
+                // On a branch: bobs its head now and then, beak open while it caws. On
+                // the ground: pecks.
+                let feeding = c.flight == Flight::Feeding;
                 let z = c.z;
                 let black = col([0.07, 0.07, 0.09]);
-                let (a, b) = (at(-0.13, z - 0.004), at(0.13, z + 0.008));
-                draw_line(
-                    a.x,
-                    a.y,
-                    b.x,
-                    b.y,
-                    (0.02 * px).max(1.0),
-                    col([0.22, 0.15, 0.1]),
-                );
+                if feeding {
+                    shadow(0.07);
+                } else {
+                    let (a, b) = (at(-0.13, z - 0.004), at(0.13, z + 0.008));
+                    draw_line(
+                        a.x,
+                        a.y,
+                        b.x,
+                        b.y,
+                        (0.02 * px).max(1.0),
+                        col([0.22, 0.15, 0.1]),
+                    );
+                }
                 for u in [-0.01, 0.015] {
                     let (a, b) = (at(u, z + 0.03), at(u, z));
                     draw_line(
@@ -617,7 +819,14 @@ impl Critters {
                 } else {
                     0.008 * ((t * 1.7).sin() > 0.9) as u8 as f32
                 };
-                let (hu, hz) = (0.055, z + 0.105 + bob);
+                // A peck: the head drops to the ground and back, a few times a second
+                // with a pause now and then to look round.
+                let peck = if feeding && (t * 0.5).fract() < 0.7 {
+                    (t * 5.0).sin().max(0.0).powi(2)
+                } else {
+                    0.0
+                };
+                let (hu, hz) = (0.055 + 0.03 * peck, z + 0.105 + bob - 0.085 * peck);
                 circle(hu, hz, 0.027, black);
                 let gape = if cawing { 0.012 } else { 0.0 };
                 let beak = col([0.25, 0.25, 0.27]);

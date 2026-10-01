@@ -1360,7 +1360,7 @@ fn draw_strips(
 }
 
 /// Forest: how far out trees are drawn — past this the haze has fully swallowed them.
-pub(crate) const TREE_RANGE: f32 = 11.0;
+pub(crate) const TREE_RANGE: f32 = 8.0;
 /// How much the mist softens a far spruce: its mip is picked as if it were `1 + MIST_BLUR·depth²`
 /// times smaller than drawn.
 pub(crate) const MIST_BLUR: f32 = 0.06;

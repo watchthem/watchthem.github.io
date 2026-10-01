@@ -326,6 +326,7 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
             daily_done = false;
             (game, grid, theme, fx, decor) = fresh(mode, 1, art_seed);
             anim.reset(game.know.pos, game.know.facing);
+            critters.clear_crumbs();
             shown = Shown::new(&game);
             map_cache.mark_dirty();
         }
@@ -338,6 +339,7 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
             daily_done = false;
             (game, grid, theme, fx, decor) = fresh(mode, 1, art_seed);
             anim.reset(game.know.pos, game.know.facing);
+            critters.clear_crumbs();
             shown = Shown::new(&game);
             map_cache.mark_dirty();
         }
@@ -486,6 +488,7 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
                         };
                         (game, grid, theme, fx, decor) = fresh(mode, next, art_seed);
                         anim.reset(game.know.pos, game.know.facing);
+                        critters.clear_crumbs();
                         shown = Shown::new(&game);
                         map_cache.mark_dirty();
                     }
@@ -656,6 +659,7 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
         let forest = theme.kind == view::theme::ThemeKind::Forest;
         // Forest: the fire and the critters sort in among the trees.
         if forest {
+            critters.drop_crumb(anim.pos);
             fx.update_motes(get_frame_time().min(0.1));
         }
         let amid: Vec<Vec2> = if forest {
@@ -715,6 +719,8 @@ pub async fn amain(cli: CliArgs) -> control::ExitReason {
             )
         };
         if forest {
+            // The bot's trail lies under everything standing out there.
+            critters.draw_crumbs(&cam, &theme.palette, &light);
             // Far to near: the trees between each thing and the one behind it, then it —
             // painter's order is the trees' only occlusion, so critters, the campfire
             // and the motes all sort in among them. The decor (the campfire) goes at the
