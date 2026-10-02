@@ -1508,7 +1508,8 @@ pub fn audio_context_capture_script() -> Markup {
                  \x20 if (!Orig) return;\n\
                  \x20 function Wrapped() {\n\
                  \x20   var ctx = new Orig(...arguments);\n\
-                 \x20   window.__hcgAudioCtx = ctx;\n\
+                 \x20   // First one only: quad-snd's unlock code builds a second, throwaway context.\n\
+                 \x20   if (!window.__hcgAudioCtx) window.__hcgAudioCtx = ctx;\n\
                  \x20   return ctx;\n\
                  \x20 }\n\
                  \x20 Wrapped.prototype = Orig.prototype;\n\
@@ -1533,9 +1534,13 @@ pub fn audio_context_capture_script() -> Markup {
 ///   new `AudioContext` suspended until the page gets a click/tap/key press, and no API
 ///   can ask the visitor for permission instead. While it's suspended this returns 0 and
 ///   shows `top_banners`' `#sound-hint` (only on pages whose game actually tries to make a sound); the
-///   banner hides itself when the context starts running. quad-snd's own bundle already
-///   resumes the context on any `mousedown`/`keydown`/`touch*` anywhere on the document,
-///   so the banner needs no click handler of its own.
+///   banner hides itself when the context starts running.
+///
+/// It also installs its own gesture unlock (`resume()` on every `touchend`/`pointerup`/
+/// `mousedown`/`keydown`/`click`, capture phase, until running and not muted). quad-snd's
+/// bundle has one too, but it removes itself after the *first* event — on mobile that's
+/// `touchstart`, which iOS and Chrome Android don't treat as a user gesture, so the
+/// `resume()` is refused and sound never started on any mobile browser.
 ///
 /// Hidden under `?embed=1`/`?stream=1` like the rest of the chrome (those modes mute
 /// audio anyway, so the hook is never reached). Must run after `mq_js_bundle.js` but
@@ -1546,12 +1551,23 @@ pub fn audio_bridge() -> Markup {
             (PreEscaped(minify_js(
                 "miniquad_add_plugin({\n\
                  \x20 register_plugin: function(importObject) {\n\
-                 \x20   importObject.env.hcg_set_audio_muted = function(muted) {\n\
+                 \x20   var muted = false;\n\
+                 \x20   importObject.env.hcg_set_audio_muted = function(m) {\n\
+                 \x20     muted = !!m;\n\
                  \x20     var ctx = window.__hcgAudioCtx;\n\
                  \x20     if (!ctx) return;\n\
                  \x20     if (muted) ctx.suspend().catch(function() {});\n\
                  \x20     else ctx.resume().catch(function() {});\n\
                  \x20   };\n\
+                 \x20   // Our own gesture unlock: quad-snd's drops itself after the first event, and on\n\
+                 \x20   // mobile that's a touchstart, which browsers don't count as a user gesture.\n\
+                 \x20   function unlock() {\n\
+                 \x20     var ctx = window.__hcgAudioCtx;\n\
+                 \x20     if (ctx && !muted && ctx.state !== 'running') ctx.resume().catch(function() {});\n\
+                 \x20   }\n\
+                 \x20   ['touchend', 'pointerup', 'mousedown', 'keydown', 'click'].forEach(function(t) {\n\
+                 \x20     document.addEventListener(t, unlock, true);\n\
+                 \x20   });\n\
                  \x20   var hintWired = false;\n\
                  \x20   importObject.env.hcg_audio_running = function() {\n\
                  \x20     var ctx = window.__hcgAudioCtx;\n\
