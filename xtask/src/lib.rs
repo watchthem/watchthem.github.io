@@ -132,6 +132,14 @@ fn fills_fullscreen(name: &str) -> bool {
 /// centering flex container. `100dvh` (with a `100vh` fallback for older browsers) so a
 /// mobile address bar appearing/collapsing doesn't leave the stage taller than the visible
 /// viewport.
+///
+/// Under `hcg-fullscreen` (`fullscreen_bridge`) the stage is instead `position: fixed;
+/// inset: 0` and the page stops scrolling: iPad Safari doesn't recompute `dvh`/`vh` on
+/// entering fullscreen, so a `100dvh` stage kept its toolbar-height size and the
+/// `.page-info` section showed as a dark band along the bottom of the screen. The page's
+/// `viewport-fit=cover` is the other half: without it Safari keeps the layout viewport out
+/// of the home-indicator strip, which stayed as a thinner band even with the fixed stage —
+/// so the fixed corner buttons, `#top-banners` and `.page-info` pad by `env(safe-area-inset-*)`.
 pub fn native_size_style(name: &str) -> Markup {
     let (w, h) = native_size(name);
     let max_scale = max_fit_scale(name);
@@ -155,6 +163,8 @@ pub fn native_size_style(name: &str) -> Markup {
                  pointer-events: none; }}\n\
                  html.hcg-bare, html.hcg-bare body {{ height: 100%; overflow: hidden; }}\n\
                  html.hcg-bare .stage {{ height: 100%; }}\n\
+                 html.hcg-fullscreen, html.hcg-fullscreen body {{ overflow: hidden; }}\n\
+                 html.hcg-fullscreen .stage {{ position: fixed; inset: 0; height: auto; z-index: 1; }}\n\
                  {PAGE_INFO_CSS}\n\
                  {POPUP_CSS}"
             )))
@@ -339,7 +349,7 @@ pub fn loading_screen_bridge() -> Markup {
 }
 
 const POPUP_CSS: &str = "\
-#hotkeys-btn { display: block; position: fixed; bottom: 14px; right: 14px; z-index: 10; \
+#hotkeys-btn { display: block; position: fixed; bottom: calc(14px + env(safe-area-inset-bottom)); right: calc(14px + env(safe-area-inset-right)); z-index: 10; \
 width: 48px; height: 48px; border-radius: 50%; border: none; \
 background: rgba(255,255,255,0.15); color: #fff; font: 20px system-ui, sans-serif; \
 line-height: 48px; text-align: center; padding: 0; cursor: pointer; }\n\
@@ -514,7 +524,7 @@ pub fn top_banners(name: &str) -> Markup {
     html! {
         style {
             (PreEscaped(
-                "#top-banners { position: fixed; top: 0; left: 0; right: 0; z-index: 12; \
+                "#top-banners { position: fixed; top: 0; left: 0; right: 0; z-index: 12; padding-top: env(safe-area-inset-top); \
                  display: flex; flex-direction: column; }\n\
                  #sound-hint { display: none; background: rgba(20,20,24,0.92); color: #fff; \
                  font: 14px system-ui, sans-serif; padding: 10px 16px; text-align: center; \
@@ -554,7 +564,7 @@ const PAGE_INFO_CSS: &str = "\
 text-align: center; color: rgba(255,255,255,0.28); font: 20px system-ui, sans-serif; \
 line-height: 1; pointer-events: none; transition: opacity 0.3s; }\n\
 .scroll-cue.gone { opacity: 0; }\n\
-.page-info { max-width: 760px; margin: 0 auto; padding: 3.5rem 1.5rem 4.5rem; \
+.page-info { max-width: 760px; margin: 0 auto; padding: 3.5rem max(1.5rem, env(safe-area-inset-right)) 4.5rem max(1.5rem, env(safe-area-inset-left)); \
 font-family: system-ui, sans-serif; color: var(--pi-text); }\n\
 .page-info .home-link { display: inline-block; margin-bottom: 1.2rem; font-size: 0.8rem; \
 color: var(--pi-accent); text-decoration: none; }\n\
@@ -1285,7 +1295,7 @@ pub fn screenshot_bridge(name: &str) -> Markup {
 }
 
 const DAILY_BTN_CSS: &str = "\
-#daily-btn { display: block; position: fixed; top: 14px; left: 14px; z-index: 10; \
+#daily-btn { display: block; position: fixed; top: calc(14px + env(safe-area-inset-top)); left: calc(14px + env(safe-area-inset-left)); z-index: 10; \
 padding: 0 14px; height: 40px; border-radius: 20px; border: none; \
 background: rgba(255,255,255,0.15); color: #fff; font: 14px system-ui, sans-serif; \
 line-height: 40px; text-align: center; text-decoration: none; cursor: pointer; }\n\
@@ -1334,7 +1344,7 @@ pub fn daily_challenge_button() -> Markup {
 }
 
 const SHARE_BTN_CSS: &str = "\
-#share-btn { display: none; position: fixed; bottom: 14px; left: 14px; z-index: 10; \
+#share-btn { display: none; position: fixed; bottom: calc(14px + env(safe-area-inset-bottom)); left: calc(14px + env(safe-area-inset-left)); z-index: 10; \
 padding: 0 14px; height: 40px; border-radius: 20px; border: none; \
 background: rgba(255,255,255,0.15); color: #fff; font: 14px system-ui, sans-serif; \
 line-height: 40px; text-align: center; cursor: pointer; }\n\
