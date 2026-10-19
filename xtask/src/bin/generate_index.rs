@@ -1788,16 +1788,16 @@ fn main() {
     )
     .unwrap();
 
-    let today = time::OffsetDateTime::now_utc().date();
+    // No <lastmod>: the only cheap value is the build date, which changes for every URL on
+    // every deploy and teaches crawlers to ignore it. Change notification goes through
+    // `mise run indexnow` (Bing/Yandex/…) instead.
     let mut urls = vec![base_url.clone(), format!("{base_url}wall/")];
     urls.extend(games.iter().map(|g| format!("{base_url}{g}/")));
     let mut sitemap = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n",
     );
     for url in &urls {
-        sitemap.push_str(&format!(
-            "  <url><loc>{url}</loc><lastmod>{today}</lastmod></url>\n"
-        ));
+        sitemap.push_str(&format!("  <url><loc>{url}</loc></url>\n"));
     }
     sitemap.push_str("</urlset>\n");
     std::fs::write(dist.join("sitemap.xml"), sitemap).unwrap();
