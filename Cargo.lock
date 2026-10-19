@@ -26,6 +26,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "asteroids"
+version = "0.1.0"
+dependencies = [
+ "audio",
+ "control",
+ "game_common",
+ "macroquad",
+ "render_cache",
+ "screenshot",
+]
+
+[[package]]
 name = "async-broadcast"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -620,6 +632,7 @@ name = "hcg-bundle"
 version = "0.1.0"
 dependencies = [
  "arrow-blocks",
+ "asteroids",
  "bubble-shooter",
  "control",
  "game2048",

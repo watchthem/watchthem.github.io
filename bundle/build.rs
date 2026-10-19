@@ -17,8 +17,9 @@ use std::fs;
 use std::path::Path;
 
 // Plain-alphabetical by games/ dir, same set `menu_art.rs::PREVIEW_BYTES` embeds.
-const GAME_NAMES: [&str; 12] = [
+const GAME_NAMES: &[&str] = &[
     "arrow-blocks",
+    "asteroids",
     "bubble-shooter",
     "game2048",
     "klondike",

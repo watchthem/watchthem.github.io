@@ -30,8 +30,9 @@ mod shell;
 /// `title()` ("2048" before "Arrow Blocks"), which would renumber everything the day a title
 /// changed. `bundle_list_matches_games_dir` below fails the test pass if this array ever
 /// drifts from the directory listing.
-const GAME_NAMES: [&str; 12] = [
+const GAME_NAMES: &[&str] = &[
     "arrow-blocks",
+    "asteroids",
     "bubble-shooter",
     "game2048",
     "klondike",
@@ -84,6 +85,7 @@ fn main() {
         "arrow-blocks" => {
             macroquad::Window::from_config(arrow_blocks::conf(), arrow_blocks::play())
         }
+        "asteroids" => macroquad::Window::from_config(asteroids::conf(), asteroids::play()),
         "bubble-shooter" => {
             macroquad::Window::from_config(bubble_shooter::conf(), bubble_shooter::play())
         }

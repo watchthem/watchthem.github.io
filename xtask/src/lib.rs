@@ -743,6 +743,10 @@ fn game_flavor(name: &str) -> &'static str {
             "You poured red into blue and called it a plan. It has never once reached \
             for undo, and finds yours touching."
         }
+        "asteroids" => {
+            "You held thrust and called it dodging. It barely touches the throttle and \
+            finds your flight path cute."
+        }
         "labyrinth" => {
             "You keep one hand on the wall and call it a strategy. It let go of the \
             wall a long time ago and it's nearly at the stairs."
@@ -1617,6 +1621,7 @@ pub fn description(name: &str) -> String {
         "bubble-shooter" => "Bubble Shooter played by an AI with better aim than yours. It banks shots into gaps you would never have taken.".into(),
         "water-sort" => "Water Sort played by an AI that has never needed an undo. It pours a mess of colors back into order, endlessly.".into(),
         "labyrinth" => "Labyrinth, explored by an AI that can only see one corridor at a time. The map beside it fills in as it goes — watch it work out the whole floor and still take the long way to the exit.".into(),
+        "asteroids" => "Asteroids, played by an AI with a zero-tolerance policy for rocks. It spins, shoots and clears the field while you struggle to remember which button fires.".into(),
         _ => format!("Watch an AI play {title} automatically in your browser."),
     }
 }

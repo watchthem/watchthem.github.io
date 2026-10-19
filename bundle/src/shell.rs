@@ -372,6 +372,10 @@ async fn run_game(idx: usize) -> control::ExitReason {
             size_to(arrow_blocks::conf());
             arrow_blocks::play_until_exit().await
         }
+        "asteroids" => {
+            size_to(asteroids::conf());
+            asteroids::play_until_exit().await
+        }
         "bubble-shooter" => {
             size_to(bubble_shooter::conf());
             bubble_shooter::play_until_exit().await

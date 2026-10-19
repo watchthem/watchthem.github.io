@@ -108,7 +108,10 @@ must pass (the bot needs a real failure mode; episodes must end on their own or 
   `--no-ui --once` with `HCG_SEED=<n>` is the standard deterministic benchmark — always
   `--release` (beam searches are ~100x slower in debug). A game driven by real `dt`
   (animation, timers) drives a fixed virtual `dt` in `run_headless` instead of reading
-  `get_frame_time()`/`date::now()`, reusing the same step functions.
+  `get_frame_time()`/`date::now()`, reusing the same step functions. A continuous-physics
+  game (asteroids) goes further: `step()` is exactly one fixed sim tick, and the window loop
+  accumulates `control.scale(get_frame_time())` into whole steps (capped per frame), so
+  windowed and headless run the identical simulation.
 
 ## Self-playing solver games
 
@@ -121,7 +124,8 @@ solver at a watchable interval). Common solver shapes:
 - **Fixed technique escalation over a puzzle with one known answer** (sudoku): write the
   escalation directly in `solver.rs`.
 - **Per-tick heuristic or small search in the game's own code** (snake's BFS, game2048's
-  expectimax, minesweeper's constraint solving, labyrinth's explorer).
+  expectimax, minesweeper's constraint solving, labyrinth's explorer, asteroids' threat
+  model + flyable escape rollouts).
 
 Decide by measurement, not inspection: match-3 was built 1-ply on a branching-factor argument
 and beam search then beat it by 6–14pp at ~1.5ms/move. Tune against measured outcomes over a

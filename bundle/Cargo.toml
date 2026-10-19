@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 macroquad = "0.4"
 arrow-blocks = { path = "../games/arrow-blocks" }
+asteroids = { path = "../games/asteroids" }
 bubble-shooter = { path = "../games/bubble-shooter" }
 game2048 = { path = "../games/game2048" }
 klondike = { path = "../games/klondike" }

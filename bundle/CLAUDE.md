@@ -40,7 +40,7 @@ Shape (keep it for new games):
   index → game, plain-alphabetical by `games/<dir>`, baked into each page by
   `xtask::game_id_bridge` / `xtask::bundle_game_index`. Not `xtask::all_games()`'s order —
   that sorts by display `title()`, so a retitled game would silently renumber every page.
-  `bundle`'s own `bundle_list_matches_games_dir` test fails if the array drifts from `games/`.
+  `bundle`'s own `bundle_list_matches_games_dir` test fails if the list drifts from `games/`.
 - **Every JS bridge must be registered on every game page.** The merged module carries every
   game's imports whatever game a page runs, and a wasm import the page never registered fails
   instantiation with a LinkError — that's why `variant_query_bridge` (only minesweeper reads
