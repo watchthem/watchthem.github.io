@@ -23,6 +23,10 @@ fn main() {
     let page_url = format!("{base_url}{name}/");
     let og = social_image(&base_url, dist, Some(&format!("{name}/preview.png")));
     let video = social_video(&base_url, dist, &name);
+    // Same formula as `game_page_info`'s h1. The bare "<Game> — Hotel Chair Games" sat at
+    // SERP position ~7 with zero clicks (2048: 75 impressions, Oct 2026) — it didn't say
+    // what set the page apart from every other result for that game.
+    let page_title = format!("{title}, Played by an AI — Hotel Chair Games");
 
     let page = html! {
         (DOCTYPE)
@@ -31,13 +35,13 @@ fn main() {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover";
                 (favicon_links(&base_url, dist))
-                title { (title) " — Hotel Chair Games" }
+                title { (page_title) }
                 meta name="description" content=(description);
                 link rel="canonical" href=(page_url);
                 meta property="og:type" content=(if video.is_some() { "video.other" } else { "website" });
                 meta property="og:site_name" content="Hotel Chair Games";
                 meta property="og:locale" content="en_US";
-                meta property="og:title" content=(format!("{title} — Hotel Chair Games"));
+                meta property="og:title" content=(page_title);
                 meta property="og:description" content=(description);
                 meta property="og:url" content=(page_url);
                 meta property="og:image" content=(og.url);

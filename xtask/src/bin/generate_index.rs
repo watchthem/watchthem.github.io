@@ -1611,9 +1611,8 @@ fn main() {
                 // but "Hotel Chair Games" alone tells a SERP reader (and Google) nothing
                 // about what the site is, and nobody searches the brand yet. "Watch them
                 // play" is also the site's own domain (watchthem.github.io), so the title,
-                // the URL and the premise all say the same thing. Game pages deliberately
-                // keep their terse "<Game> — Hotel Chair Games" form; their keyword weight
-                // comes from `game_page_info`'s on-page text instead.
+                // the URL and the premise all say the same thing. Game pages use
+                // "<Game>, Played by an AI — Hotel Chair Games" (see generate_game_html).
                 title { "Hotel Chair Games — Watch Them Play" }
                 (favicon_links(&base_url, dist))
                 meta name="description" content=(SITE_DESCRIPTION);
