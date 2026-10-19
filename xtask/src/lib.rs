@@ -163,6 +163,7 @@ pub fn native_size_style(name: &str) -> Markup {
                  pointer-events: none; }}\n\
                  html.hcg-bare, html.hcg-bare body {{ height: 100%; overflow: hidden; }}\n\
                  html.hcg-bare .stage {{ height: 100%; }}\n\
+                 html.hcg-bare .page-info {{ display: none; }}\n\
                  html.hcg-fullscreen, html.hcg-fullscreen body {{ overflow: hidden; }}\n\
                  html.hcg-fullscreen .stage {{ position: fixed; inset: 0; height: auto; z-index: 1; }}\n\
                  {PAGE_INFO_CSS}\n\
@@ -213,8 +214,10 @@ pub fn native_size_style(name: &str) -> Markup {
 ///   rule to key off.
 /// - `hcg-bare` under `window.__hcgHide`, which restores the old non-scrolling
 ///   `height: 100%; overflow: hidden` page and hides `game_page_info`'s below-the-fold
-///   content entirely. An ambient-wall tile is an iframe a few hundred px tall — letting it
-///   scroll to a text section would be actively wrong there (and on an OBS browser source
+///   content entirely (`display: none`, not just clipped — clipped, its lazy related-card
+///   images were still within the lazy-load distance of a small iframe, so every wall tile
+///   downloaded three previews nobody could see). An ambient-wall tile is an iframe a few
+///   hundred px tall — letting it scroll to a text section would be actively wrong there (and on an OBS browser source
 ///   there's nobody to scroll it), so both those modes keep exactly the single-screen
 ///   canvas page they had before that section existed.
 ///
@@ -647,8 +650,11 @@ pub fn preview_srcset(dist: &Path, game: &str, prefix: &str) -> Option<String> {
 
 /// Filename of the one wasm binary every game page loads — `bundle/`'s merged build, which
 /// picks its game at runtime from `game_id_bridge`'s baked index. Site-root-relative
-/// (`dist/hcg.wasm`), not per-game, so a second page visit and the wall's 11 iframes hit the
-/// browser cache instead of downloading another copy of the framework.
+/// (`dist/hcg.wasm`), not per-game, so a second page visit and the wall's iframes hit the
+/// browser cache instead of downloading another copy of the framework. Verified on the live
+/// wall (2026-10-19): one 0.49MB transfer for every tile even when they all mount at once —
+/// Chrome's HTTP-cache lock makes concurrent requests wait for the first. Lighthouse's
+/// network table still lists one full-size `hcg.wasm` row per tile; those are cache hits.
 pub const BUNDLE_WASM: &str = "hcg.wasm";
 
 /// This game's index in the merged bundle's dispatch table (`bundle/src/main.rs`'s
@@ -1006,13 +1012,13 @@ pub fn wall_analytics_bridge() -> Markup {
 /// (that game's existing `preview.png`, same file the OG-image fallback chain uses) — no
 /// iframe, no WASM instance, until this script decides one is warranted. `loading="lazy"`
 /// on a bare `<iframe>` (the previous design) only defers the *first* load; it never
-/// unloads, so scrolling the page once was enough to mount all 11 WASM instances — each
+/// unloads, so scrolling the page once was enough to mount every game's WASM instance — each
 /// holding its own WebGL context and wasm heap — and leave every one of them running
 /// forever. iOS Safari caps simultaneous WebGL contexts and silently evicts the oldest
-/// once that cap is hit; on a page whose entire premise is "leave 11 of these running",
+/// once that cap is hit; on a page whose entire premise is "leave all of these running",
 /// that reliably went badly. This replaces the static `<iframe>` with an
-/// `IntersectionObserver` that mounts a live iframe only for tiles actually near the
-/// viewport and unmounts (fully removes, not `src="about:blank"` — that can still pin the
+/// `IntersectionObserver` that mounts a live iframe only for tiles actually on screen
+/// and unmounts (fully removes, not `src="about:blank"` — that can still pin the
 /// context alive) any tile that scrolls back out, under a hard cap on how many can be
 /// live at once.
 ///
@@ -1027,7 +1033,11 @@ pub fn wall_analytics_bridge() -> Markup {
 ///   - `navigator.deviceMemory` present and < 4 → 3 (both signals are Chromium-only and
 ///     absent elsewhere, incl. all of iOS Safari — the `undefined` case falls through to
 ///     the viewport-width rule below, which is the one that actually matters on phones).
-///   - viewport width < 700 → 3, < 1100 → 6, else 11 (every game on the site, no cap).
+///   - viewport width < 700 → 3 (one column; that many is all a phone shows at once).
+///   - otherwise no cap beyond visibility: the observer (no `rootMargin`) mounts a tile
+///     the moment any of it is on screen and unmounts it once it's fully off, so exactly
+///     the visible tiles run. Measured 2026-10-19 (Iris Xe, all 13 on screen): ~20–33fps,
+///     vs ~57 without labyrinth — the one tile whose cost shows; accepted, not capped.
 ///
 /// `prefers-reduced-motion: reduce` disables the `IntersectionObserver` entirely (nothing
 /// auto-mounts while scrolling) but leaves `budget` computed as above and tap-to-mount
@@ -1058,6 +1068,7 @@ pub fn wall_live_bridge() -> Markup {
         script {
             (PreEscaped(minify_js(
                 "(function() {\n\
+                 \x20 var tiles = document.querySelectorAll('.wall-tile');\n\
                  \x20 var reduceMotion = window.matchMedia &&\n\
                  \x20   window.matchMedia('(prefers-reduced-motion: reduce)').matches;\n\
                  \x20 var conn = navigator.connection;\n\
@@ -1068,10 +1079,8 @@ pub fn wall_live_bridge() -> Markup {
                  \x20   budget = 3;\n\
                  \x20 } else if (window.innerWidth < 700) {\n\
                  \x20   budget = 3;\n\
-                 \x20 } else if (window.innerWidth < 1100) {\n\
-                 \x20   budget = 6;\n\
                  \x20 } else {\n\
-                 \x20   budget = 11;\n\
+                 \x20   budget = tiles.length;\n\
                  \x20 }\n\
                  \x20\n\
                  \x20 var live = new Map();\n\
@@ -1117,7 +1126,6 @@ pub fn wall_live_bridge() -> Markup {
                  \x20   if (img) img.style.visibility = '';\n\
                  \x20 }\n\
                  \x20\n\
-                 \x20 var tiles = document.querySelectorAll('.wall-tile');\n\
                  \x20 tiles.forEach(function(tile) {\n\
                  \x20   tile.addEventListener('click', function(e) {\n\
                  \x20     if (e.target.closest('a')) return;\n\
@@ -1135,7 +1143,7 @@ pub fn wall_live_bridge() -> Markup {
                  \x20       if (entry.isIntersecting) mount(entry.target);\n\
                  \x20       else unmount(entry.target);\n\
                  \x20     });\n\
-                 \x20   }, { rootMargin: '200px' });\n\
+                 \x20   }, { rootMargin: '0px' });\n\
                  \x20   tiles.forEach(function(tile) { io.observe(tile); });\n\
                  \x20 }\n\
                  })();"

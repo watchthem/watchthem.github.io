@@ -58,9 +58,9 @@ Two things are load-bearing:
   that adds hundreds of px of dead scroll region between the canvas and the text.
 - **`hcg-bare`** (set on `<html>` by `mode_class_script` under `?embed=1`/`?stream=1`, the
   same `HIDE_CHROME_JS` condition every other chrome element uses) restores the old
-  non-scrolling `height: 100%; overflow: hidden` page, which clips the section out of reach
-  rather than `display: none`-ing it — it's still in the layout (body `scrollHeight` 1422 vs
-  document 720), just unreachable, since the page can no longer scroll at all. An
+  non-scrolling `height: 100%; overflow: hidden` page and `display: none`s `.page-info`.
+  Clipping alone wasn't enough: the related cards' lazy images were still within the
+  lazy-load distance of a small iframe, so every wall tile fetched three hidden previews. An
   ambient-wall tile is a few-hundred-px iframe and an OBS browser source has no reader —
   neither should scroll to a text block. **Any new below-fold/page-level content must be
   hidden under `hcg-bare` too.**
@@ -101,6 +101,13 @@ uninterrupted video wall at rest. An `<a href>` is crawled regardless of how it'
 took the wall from 1 outbound link to 12. `wall_live_bridge`'s tile-click handler bails on any
 click inside an `<a>`, so tapping a label navigates while tapping the tile still mounts the
 live game.
+
+Wall performance levers tried and closed (2026-10-19, throttled Playwright runs + Lighthouse):
+staggering tile mounts and compiling the wasm once in the wall for
+every tile to reuse both measured *worse* (more long tasks, slower to fill, later LCP) —
+Chrome already dedupes the concurrent `hcg.wasm` downloads and reuses compiled code for
+identical wasm bytes. Lighthouse's TBT on the wall is the games themselves running, which is
+the page's point.
 
 ## Light/dark theme
 
