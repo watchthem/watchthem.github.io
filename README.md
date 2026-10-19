@@ -6,6 +6,9 @@ while you sit in a comfortable chair, enjoy the show, and remain powerless to
 correct any of their mistakes. Rust + macroquad, ships to native and WASM.
 No, it doesn't use wasm-bindgen, stop asking.
 
+**Watch them play:** <https://watchthem.github.io/> — or all of them at once on
+the [ambient wall](https://watchthem.github.io/wall/).
+
 ## Quickstart
 
 ```
