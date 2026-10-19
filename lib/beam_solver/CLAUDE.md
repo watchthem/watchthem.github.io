@@ -43,3 +43,12 @@ states have very different pathological-branching profiles.
    re-measure for the new game's actual branching factor rather than assuming either
    transfers — see `games/spider/CLAUDE.md`'s solver section for the latency-jitter
    caveat around pushing width/depth higher than currently shipped.
+
+## Scoring lesson (match-3, measured)
+
+Lines are scored by **cumulative sum**, so a path-additive goal bonus lets the search defer
+the winning move to a deeper ply, where it rides a phantom (preview-RNG) refill and banks the
+root move's incidental score on top. If a game has an endgame/goal bonus, apply the strong
+emphasis in `score_root` only (match-3's `JELLY_ENDGAME_ROOT_BONUS`: +11pp win rate on its
+hardest jelly level). See `games/match-3/CLAUDE.md` for the full ablation trail, including
+the rejected tuning ideas — don't retry those without new evidence.
