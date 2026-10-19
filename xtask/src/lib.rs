@@ -1880,7 +1880,7 @@ pub fn homepage_json_ld(base_url: &str, dist: &Path, description: &str) -> Marku
     let description = json_escape(description);
     let logo_url = json_escape(&logo_url);
     let json = format!(
-        r#"{{"@context":"https://schema.org","@graph":[{{"@type":"WebSite","name":"Hotel Chair Games","url":"{base_url}","description":"{description}","publisher":{{"@type":"Organization","name":"Hotel Chair Games","url":"{base_url}","logo":"{logo_url}"}}}},{{"@type":"Organization","name":"Hotel Chair Games","url":"{base_url}","logo":"{logo_url}"}}]}}"#
+        r#"{{"@context":"https://schema.org","@graph":[{{"@type":"WebSite","name":"Hotel Chair Games","url":"{base_url}","description":"{description}","publisher":{{"@type":"Organization","name":"Hotel Chair Games","url":"{base_url}","logo":"{logo_url}"}}}},{{"@type":"Organization","name":"Hotel Chair Games","url":"{base_url}","logo":"{logo_url}","sameAs":["https://github.com/watchthem"]}}]}}"#
     );
     html! {
         script type="application/ld+json" {
